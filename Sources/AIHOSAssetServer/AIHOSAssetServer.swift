@@ -927,19 +927,25 @@ struct AIHOSAssetServer {
         }
         print("HTTP Server Host: 0.0.0.0")
 
-        app.databases.use(
-            .postgres(
-                configuration: .init(
-                    hostname: "localhost",
-                    port: 5432,
-                    username: "tibi",
-                    password: nil,
-                    database: "tibi",
-                    tls: .disable
-                )
-            ),
-            as: .psql
-        )
+        if let databaseURL = Environment.get("DATABASE_URL") {
+            try app.databases.use(.postgres(url: databaseURL), as: .psql)
+            print("PostgreSQL configuration registered from DATABASE_URL")
+        } else {
+            app.databases.use(
+                .postgres(
+                    configuration: .init(
+                        hostname: "localhost",
+                        port: 5432,
+                        username: "tibi",
+                        password: nil,
+                        database: "tibi",
+                        tls: .disable
+                    )
+                ),
+                as: .psql
+            )
+            print("PostgreSQL local configuration registered")
+        }
 
         app.migrations.add(CreateAssetRecords())
         app.migrations.add(CreateSubordinateTracks())
@@ -962,12 +968,6 @@ struct AIHOSAssetServer {
         print("Migration registered: CreateGovernanceTriggers")
         print("Migration registered: ActivateOperationalStandardsGovernanceTriggers")
         print("Migration registered: CreateStandardStatusUpdates")
-        print("PostgreSQL configuration registered")
-        print("Database: tibi")
-        print("User: tibi")
-        print("Host: localhost")
-        print("Port: 5432")
-        print("TLS: disabled")
 
         app.get("health", "db") { req async throws -> HTTPStatus in
             guard let sql = req.db as? SQLDatabase else {
