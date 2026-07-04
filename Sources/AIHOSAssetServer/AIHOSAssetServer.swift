@@ -918,6 +918,13 @@ struct AIHOSAssetServer {
         }
 
         app.http.server.configuration.hostname = "0.0.0.0"
+        if let portString = Environment.get("PORT"), let port = Int(portString) {
+            app.http.server.configuration.port = port
+            print("HTTP Server Port from Render PORT: \(port)")
+        } else {
+            app.http.server.configuration.port = 8080
+            print("HTTP Server Port default: 8080")
+        }
         print("HTTP Server Host: 0.0.0.0")
 
         app.databases.use(
