@@ -3,8 +3,13 @@ import Fluent
 import FluentPostgresDriver
 import SQLKit
 import Foundation
+#if canImport(Speech)
 import Speech
+#endif
+
+#if canImport(Vision)
 import Vision
+#endif
 
 struct SyncMetadata: Codable {
     let captureTimestamp: String
@@ -760,6 +765,7 @@ func isStandardActive(
     return createdAt <= evaluationTimestamp
 }
 
+#if canImport(Speech)
 actor AppleSpeechTranscriber {
     enum TranscriptionOutcome {
         case text(String)
@@ -844,6 +850,20 @@ actor AppleSpeechTranscriber {
         }
     }
 }
+#else
+actor AppleSpeechTranscriber {
+    enum TranscriptionOutcome {
+        case text(String)
+        case null(reason: String)
+    }
+
+    func transcribeAudioFile(at fileURL: URL, localeIdentifier: String = "en-US") async throws -> TranscriptionOutcome {
+        return .null(reason: "Apple Speech is unavailable on this server runtime")
+    }
+}
+#endif
+
+#if canImport(Vision)
 
 actor AppleVisionOCRVerifier {
     enum OCROutcome {
@@ -874,6 +894,18 @@ actor AppleVisionOCRVerifier {
         return .text(rawText)
     }
 }
+#else
+actor AppleVisionOCRVerifier {
+    enum OCROutcome {
+        case text(String)
+        case null(reason: String)
+    }
+
+    func recognizeText(in imageURL: URL) async throws -> OCROutcome {
+        return .null(reason: "Apple Vision OCR is unavailable on this server runtime")
+    }
+}
+#endif
 
 @main
 struct AIHOSAssetServer {
