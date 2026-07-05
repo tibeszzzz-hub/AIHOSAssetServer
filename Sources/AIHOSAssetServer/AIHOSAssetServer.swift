@@ -981,14 +981,23 @@ struct AIHOSAssetServer {
         print("Migration registered: CreateStandardStatusUpdates")
 
         app.get("health", "db") { req async throws -> HTTPStatus in
+            print("Database health check START")
+
             guard let sql = req.db as? SQLDatabase else {
                 print("Database health check FAIL: SQL database unavailable")
                 return .internalServerError
             }
 
-            try await sql.raw("SELECT 1;").run()
-            print("Database health check PASS")
-            return .ok
+            print("Database health check SQL database cast PASS")
+
+            do {
+                try await sql.raw("SELECT 1;").run()
+                print("Database health check SELECT 1 PASS")
+                return .ok
+            } catch {
+                print("Database health check SELECT 1 FAIL: \(error)")
+                return .internalServerError
+            }
         }
 
         app.get("test", "immutable") { req async throws -> HTTPStatus in
