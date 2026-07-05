@@ -928,8 +928,19 @@ struct AIHOSAssetServer {
         print("HTTP Server Host: 0.0.0.0")
 
         if let databaseURL = Environment.get("DATABASE_URL") {
-            try app.databases.use(.postgres(url: databaseURL), as: .psql)
-            print("PostgreSQL configuration registered from DATABASE_URL")
+            var configuration = try SQLPostgresConfiguration(url: databaseURL)
+
+            var tlsConfiguration = TLSConfiguration.makeClientConfiguration()
+            tlsConfiguration.certificateVerification = .none
+
+            configuration.coreConfiguration.tls = try .require(.init(configuration: tlsConfiguration))
+
+            app.databases.use(
+                .postgres(configuration: configuration),
+                as: .psql
+            )
+
+            print("PostgreSQL configuration registered from DATABASE_URL with explicit TLS override")
         } else {
             app.databases.use(
                 .postgres(
