@@ -980,6 +980,9 @@ struct AIHOSAssetServer {
         print("Migration registered: ActivateOperationalStandardsGovernanceTriggers")
         print("Migration registered: CreateStandardStatusUpdates")
 
+        try await app.autoMigrate()
+        print("Database migrations executed")
+
         app.get("health", "db") { req async -> Response in
             req.logger.info("DB HEALTH ROUTE ENTERED")
 
