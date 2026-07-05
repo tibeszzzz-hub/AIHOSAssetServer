@@ -980,23 +980,40 @@ struct AIHOSAssetServer {
         print("Migration registered: ActivateOperationalStandardsGovernanceTriggers")
         print("Migration registered: CreateStandardStatusUpdates")
 
-        app.get("health", "db") { req async throws -> HTTPStatus in
-            print("Database health check START")
+        app.get("health", "db") { req async -> Response in
+            req.logger.info("DB HEALTH ROUTE ENTERED")
+
+            var headers = HTTPHeaders()
+            headers.add(name: .contentType, value: "application/json")
 
             guard let sql = req.db as? SQLDatabase else {
-                print("Database health check FAIL: SQL database unavailable")
-                return .internalServerError
+                req.logger.error("DB HEALTH SQL CAST FAIL")
+                return Response(
+                    status: .internalServerError,
+                    headers: headers,
+                    body: .init(string: #"{"status":"fail","stage":"sql_cast"}"#)
+                )
             }
 
-            print("Database health check SQL database cast PASS")
+            req.logger.info("DB HEALTH SQL CAST PASS")
 
             do {
-                try await sql.raw("SELECT 1;").run()
-                print("Database health check SELECT 1 PASS")
-                return .ok
+                try await sql.raw("SELECT 1").run()
+                req.logger.info("DB HEALTH SELECT 1 PASS")
+
+                return Response(
+                    status: .ok,
+                    headers: headers,
+                    body: .init(string: #"{"status":"ok","stage":"select_1"}"#)
+                )
             } catch {
-                print("Database health check SELECT 1 FAIL: \(error)")
-                return .internalServerError
+                req.logger.error("DB HEALTH SELECT 1 FAIL: \(String(reflecting: error))")
+
+                return Response(
+                    status: .internalServerError,
+                    headers: headers,
+                    body: .init(string: #"{"status":"fail","stage":"select_1"}"#)
+                )
             }
         }
 
