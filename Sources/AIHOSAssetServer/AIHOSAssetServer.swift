@@ -32,11 +32,24 @@ struct MultipartAudioPayload: Content {
     let audio: File
 }
 
+
 struct DecisionPayload: Content {
     let standardKey: String
     let expectedWindowStart: String
     let expectedWindowEnd: String
     let decisionType: String
+}
+
+struct ObservationDecisionPayload: Content {
+    let decisionType: String
+}
+
+struct ObservationDecisionTraceResponse: Content {
+    let id: String
+    let targetAssetRecordID: String
+    let decisionType: String
+    let sourceTag: String
+    let createdAt: String
 }
 
 struct PayloadTextRequest: Content {
@@ -255,6 +268,96 @@ struct CreateDecisionTraces: AsyncMigration {
 
     func revert(on database: Database) async throws {
         try await database.schema("decision_traces").delete()
+    }
+}
+
+struct AddObservationDecisionTraceTarget: AsyncMigration {
+    func prepare(on database: Database) async throws {
+        guard let sql = database as? SQLDatabase else {
+            throw Abort(.internalServerError, reason: "SQL database unavailable for observation decision trace target migration")
+        }
+
+        try await sql.raw("""
+            ALTER TABLE decision_traces
+            ADD COLUMN IF NOT EXISTS target_asset_record_id UUID NULL;
+        """).run()
+
+        try await sql.raw("""
+            ALTER TABLE decision_traces
+            ALTER COLUMN "standard_key" DROP NOT NULL;
+        """).run()
+
+        try await sql.raw("""
+            ALTER TABLE decision_traces
+            ALTER COLUMN "expected_window_start" DROP NOT NULL;
+        """).run()
+
+        try await sql.raw("""
+            ALTER TABLE decision_traces
+            ALTER COLUMN "expected_window_end" DROP NOT NULL;
+        """).run()
+
+        try await sql.raw("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'decision_traces_target_asset_record_id_fkey'
+                ) THEN
+                    ALTER TABLE decision_traces
+                    ADD CONSTRAINT decision_traces_target_asset_record_id_fkey
+                    FOREIGN KEY (target_asset_record_id)
+                    REFERENCES asset_records(id);
+                END IF;
+            END $$;
+        """).run()
+
+        try await sql.raw("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'decision_traces_exactly_one_target_check'
+                ) THEN
+                    ALTER TABLE decision_traces
+                    ADD CONSTRAINT decision_traces_exactly_one_target_check
+                    CHECK (
+                        (
+                            "standard_key" IS NOT NULL
+                            AND target_asset_record_id IS NULL
+                        )
+                        OR
+                        (
+                            "standard_key" IS NULL
+                            AND target_asset_record_id IS NOT NULL
+                        )
+                    );
+                END IF;
+            END $$;
+        """).run()
+    }
+
+    func revert(on database: Database) async throws {
+        guard let sql = database as? SQLDatabase else {
+            throw Abort(.internalServerError, reason: "SQL database unavailable for observation decision trace target migration revert")
+        }
+
+        try await sql.raw("""
+            ALTER TABLE decision_traces
+            DROP CONSTRAINT IF EXISTS decision_traces_exactly_one_target_check;
+        """).run()
+
+        try await sql.raw("""
+            ALTER TABLE decision_traces
+            DROP CONSTRAINT IF EXISTS decision_traces_target_asset_record_id_fkey;
+        """).run()
+
+        try await sql.raw("""
+            ALTER TABLE decision_traces
+            DROP COLUMN IF EXISTS target_asset_record_id;
+        """).run()
     }
 }
 
@@ -966,6 +1069,8 @@ struct AIHOSAssetServer {
         app.migrations.add(CreateOperationalStandards())
         app.migrations.add(AddOperationalStandardsGovernanceFields())
         app.migrations.add(CreateDecisionTraces())
+        app.migrations.add(AddObservationDecisionTraceTarget())
+        app.migrations.add(ActivateDecisionTraceGovernanceTriggers())
         app.migrations.add(CreatePayloadTextStorage())
         app.migrations.add(CreateLaneMetadataFoundation())
         app.migrations.add(CreateGovernanceTriggers())
@@ -977,6 +1082,8 @@ struct AIHOSAssetServer {
         print("Migration registered: CreateOperationalStandards")
         print("Migration registered: AddOperationalStandardsGovernanceFields")
         print("Migration registered: CreateDecisionTraces")
+        print("Migration registered: AddObservationDecisionTraceTarget")
+        print("Migration registered: ActivateDecisionTraceGovernanceTriggers")
         print("Migration registered: CreatePayloadTextStorage")
         print("Migration registered: CreateLaneMetadataFoundation")
         print("Migration registered: CreateGovernanceTriggers")
@@ -1814,26 +1921,39 @@ struct AIHOSAssetServer {
 
             let decisionRows = try await sql.raw("""
                 SELECT
-                    id,
-                    "standard_key",
-                    "expected_window_start",
-                    "expected_window_end",
-                    "decision_type",
-                    "source_tag",
-                    "created_at",
-                    lane_key
+                    decision_traces.id,
+                    decision_traces."standard_key",
+                    decision_traces."expected_window_start",
+                    decision_traces."expected_window_end",
+                    decision_traces.target_asset_record_id,
+                    decision_traces."decision_type",
+                    decision_traces."source_tag",
+                    decision_traces."created_at",
+                    COALESCE(decision_traces.lane_key, asset_records.lane_key, 'unassigned') AS lane_key
                 FROM decision_traces
+                LEFT JOIN asset_records
+                    ON asset_records.id = decision_traces.target_asset_record_id
             """).all()
 
             for row in decisionRows {
                 let id = try row.decode(column: "id", as: UUID.self).uuidString
-                let standardKey = try row.decode(column: "standard_key", as: String.self)
-                let expectedWindowStart = try row.decode(column: "expected_window_start", as: String.self)
-                let expectedWindowEnd = try row.decode(column: "expected_window_end", as: String.self)
+                let standardKey = try row.decode(column: "standard_key", as: String?.self)
+                let expectedWindowStart = try row.decode(column: "expected_window_start", as: String?.self)
+                let expectedWindowEnd = try row.decode(column: "expected_window_end", as: String?.self)
+                let targetAssetRecordID = try row.decode(column: "target_asset_record_id", as: UUID?.self)
                 let decisionType = try row.decode(column: "decision_type", as: String.self)
                 let sourceTag = try row.decode(column: "source_tag", as: String.self)
                 let createdAt = try row.decode(column: "created_at", as: String.self)
                 let laneKey = try row.decode(column: "lane_key", as: String.self)
+
+                let message: String
+                if let targetAssetRecordID {
+                    message = "Observation decision trace: \(decisionType) — asset \(targetAssetRecordID.uuidString)"
+                } else if let standardKey, let expectedWindowStart, let expectedWindowEnd {
+                    message = "Decision trace: \(decisionType) — \(standardKey) — \(expectedWindowStart) to \(expectedWindowEnd)"
+                } else {
+                    message = "Decision trace: \(decisionType) — unresolved target"
+                }
 
                 logEntries.append(
                     ShiftHandoverLogEntry(
@@ -1841,22 +1961,166 @@ struct AIHOSAssetServer {
                         sourceTag: sourceTag,
                         eventTimestamp: createdAt,
                         entryType: "Decision Trace",
-                        message: "Decision trace: \(decisionType) — \(standardKey) — \(expectedWindowStart) to \(expectedWindowEnd)",
+                        message: message,
                         laneKey: laneKey
                     )
                 )
             }
 
-            let sortedLogEntries = logEntries.sorted { first, second in
-                first.eventTimestamp > second.eventTimestamp
+            logEntries.sort { first, second in
+                let firstDate = parsedTimestampDate(first.eventTimestamp) ?? Date.distantPast
+                let secondDate = parsedTimestampDate(second.eventTimestamp) ?? Date.distantPast
+                return firstDate > secondDate
             }
 
-            print("Shift Handover log retrieval PASS: \(sortedLogEntries.count) entries")
-            print("Shift Handover sort: eventTimestamp DESC")
-            print("Shift Handover source scope: [M] only")
+            let response = Response(status: .ok)
+            try response.content.encode(logEntries)
+            return response
+        }
+
+        app.post("api", "v1", "assets", ":assetID", "decision-traces") { req async throws -> Response in
+            guard let sql = req.db as? SQLDatabase else {
+                return Response(status: .internalServerError)
+            }
+
+            guard let assetIDString = req.parameters.get("assetID"),
+                  let assetID = UUID(uuidString: assetIDString) else {
+                print("Observation Decision Trace INSERT failed: invalid assetID")
+                let response = Response(status: .badRequest)
+                try response.content.encode([
+                    "reason": "invalid asset id"
+                ])
+                return response
+            }
+
+            let payload: ObservationDecisionPayload
+
+            do {
+                payload = try req.content.decode(ObservationDecisionPayload.self)
+            } catch {
+                print("Observation Decision Trace decode failed: \(error)")
+                return Response(status: .badRequest)
+            }
+
+            guard payload.decisionType == "handled" else {
+                print("Observation Decision Trace rejected: invalid decisionType \(payload.decisionType)")
+                let response = Response(status: .badRequest)
+                try response.content.encode([
+                    "reason": "decisionType must be handled"
+                ])
+                return response
+            }
+
+            let assetRows = try await sql.raw("""
+                SELECT id
+                FROM asset_records
+                WHERE id = \(bind: assetID)
+                LIMIT 1
+            """).all()
+
+            guard assetRows.count == 1 else {
+                print("Observation Decision Trace INSERT failed: asset not found \(assetID.uuidString)")
+                return Response(status: .notFound)
+            }
+
+            let decisionTraceID = UUID()
+            let createdAt = ISO8601DateFormatter().string(from: Date())
+            let sourceTag = "[M]"
+
+            do {
+                try await sql.raw("""
+                    INSERT INTO decision_traces
+                    (id, "standard_key", "expected_window_start", "expected_window_end", target_asset_record_id, "decision_type", "source_tag", "created_at")
+                    VALUES
+                    (\(bind: decisionTraceID), NULL, NULL, NULL, \(bind: assetID), \(bind: payload.decisionType), \(bind: sourceTag), \(bind: createdAt));
+                """).run()
+            } catch {
+                print("Observation Decision Trace INSERT failed: \(error)")
+                return Response(status: .internalServerError)
+            }
+
+            print("Observation Decision Trace INSERT PASS")
+            print("decisionTraceID: \(decisionTraceID.uuidString)")
+            print("targetAssetRecordID: \(assetID.uuidString)")
+            print("decisionType: \(payload.decisionType)")
+            print("sourceTag: \(sourceTag)")
+            print("createdAt: \(createdAt)")
+            print("Governance: observation decision trace inserted append-only; standard_key remains NULL")
 
             let response = Response(status: .ok)
-            try response.content.encode(sortedLogEntries)
+            try response.content.encode(
+                ObservationDecisionTraceResponse(
+                    id: decisionTraceID.uuidString,
+                    targetAssetRecordID: assetID.uuidString,
+                    decisionType: payload.decisionType,
+                    sourceTag: sourceTag,
+                    createdAt: createdAt
+                )
+            )
+            return response
+        }
+
+        app.get("api", "v1", "assets", ":assetID", "decision-traces") { req async throws -> Response in
+            guard let sql = req.db as? SQLDatabase else {
+                return Response(status: .internalServerError)
+            }
+
+            guard let assetIDString = req.parameters.get("assetID"),
+                  let assetID = UUID(uuidString: assetIDString) else {
+                print("Observation Decision Trace retrieval failed: invalid assetID")
+                let response = Response(status: .badRequest)
+                try response.content.encode([
+                    "reason": "invalid asset id"
+                ])
+                return response
+            }
+
+            let assetRows = try await sql.raw("""
+                SELECT id
+                FROM asset_records
+                WHERE id = \(bind: assetID)
+                LIMIT 1
+            """).all()
+
+            guard assetRows.count == 1 else {
+                print("Observation Decision Trace retrieval failed: asset not found \(assetID.uuidString)")
+                return Response(status: .notFound)
+            }
+
+            let rows = try await sql.raw("""
+                SELECT
+                    id,
+                    target_asset_record_id,
+                    "decision_type",
+                    "source_tag",
+                    "created_at"
+                FROM decision_traces
+                WHERE target_asset_record_id = \(bind: assetID)
+                ORDER BY "created_at" ASC
+            """).all()
+
+            let decisionTraces = try rows.map { row -> ObservationDecisionTraceResponse in
+                let id = try row.decode(column: "id", as: UUID.self).uuidString
+                let targetAssetRecordID = try row.decode(column: "target_asset_record_id", as: UUID.self).uuidString
+                let decisionType = try row.decode(column: "decision_type", as: String.self)
+                let sourceTag = try row.decode(column: "source_tag", as: String.self)
+                let createdAt = try row.decode(column: "created_at", as: String.self)
+
+                return ObservationDecisionTraceResponse(
+                    id: id,
+                    targetAssetRecordID: targetAssetRecordID,
+                    decisionType: decisionType,
+                    sourceTag: sourceTag,
+                    createdAt: createdAt
+                )
+            }
+
+            print("Observation Decision Trace retrieval PASS: \(decisionTraces.count) traces")
+            print("targetAssetRecordID: \(assetID.uuidString)")
+            print("Observation Decision Trace sort: created_at ASC")
+
+            let response = Response(status: .ok)
+            try response.content.encode(decisionTraces)
             return response
         }
 
@@ -2425,6 +2689,66 @@ struct AIHOSAssetServer {
 }
 
 // Migration for Lane Metadata Foundation
+// Migration to activate governance triggers for decision_traces (append-only)
+struct ActivateDecisionTraceGovernanceTriggers: AsyncMigration {
+    func prepare(on database: Database) async throws {
+        guard let sql = database as? SQLDatabase else {
+            throw Abort(.internalServerError, reason: "SQL database unavailable for decision trace governance activation")
+        }
+
+        try await sql.raw("""
+        CREATE OR REPLACE FUNCTION prevent_decision_trace_update()
+        RETURNS trigger AS $$
+        BEGIN
+            RAISE EXCEPTION 'decision_traces are append-only and cannot be updated';
+        END;
+        $$ LANGUAGE plpgsql;
+        """).run()
+
+        try await sql.raw("""
+        CREATE OR REPLACE FUNCTION prevent_decision_trace_delete()
+        RETURNS trigger AS $$
+        BEGIN
+            RAISE EXCEPTION 'decision_traces are append-only and cannot be deleted';
+        END;
+        $$ LANGUAGE plpgsql;
+        """).run()
+
+        try await sql.raw("""
+        DROP TRIGGER IF EXISTS prevent_decision_traces_update ON decision_traces;
+        """).run()
+
+        try await sql.raw("""
+        CREATE TRIGGER prevent_decision_traces_update
+        BEFORE UPDATE ON decision_traces
+        FOR EACH ROW
+        EXECUTE FUNCTION prevent_decision_trace_update();
+        """).run()
+
+        try await sql.raw("""
+        DROP TRIGGER IF EXISTS prevent_decision_traces_delete ON decision_traces;
+        """).run()
+
+        try await sql.raw("""
+        CREATE TRIGGER prevent_decision_traces_delete
+        BEFORE DELETE ON decision_traces
+        FOR EACH ROW
+        EXECUTE FUNCTION prevent_decision_trace_delete();
+        """).run()
+    }
+
+    func revert(on database: Database) async throws {
+        guard let sql = database as? SQLDatabase else {
+            throw Abort(.internalServerError, reason: "SQL database unavailable for decision trace governance activation revert")
+        }
+
+        try await sql.raw("DROP TRIGGER IF EXISTS prevent_decision_traces_delete ON decision_traces;").run()
+        try await sql.raw("DROP TRIGGER IF EXISTS prevent_decision_traces_update ON decision_traces;").run()
+        try await sql.raw("DROP FUNCTION IF EXISTS prevent_decision_trace_delete();").run()
+        try await sql.raw("DROP FUNCTION IF EXISTS prevent_decision_trace_update();").run()
+    }
+}
+
 struct CreateLaneMetadataFoundation: AsyncMigration {
     func prepare(on database: Database) async throws {
         guard let sql = database as? SQLDatabase else {
