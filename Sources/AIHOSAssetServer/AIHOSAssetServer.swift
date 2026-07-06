@@ -16,6 +16,8 @@ struct SyncMetadata: Codable {
     let sourceTag: String
     let fileName: String?
     let laneKey: String?
+    let payloadText: String?
+    let payloadTextSourceTag: String?
 }
 
 
@@ -1219,10 +1221,12 @@ struct AIHOSAssetServer {
                         VALUES (\(bind: fileID), \(bind: recordID), \(bind: storedFileName));
                         """).run()
 
-                        if let payloadText = payload.payloadText, !payloadText.isEmpty {
+                        let resolvedPayloadText = payload.payloadText ?? metadata.payloadText
+
+                        if let payloadText = resolvedPayloadText, !payloadText.isEmpty {
                             let payloadTextID = UUID()
                             let createdAt = ISO8601DateFormatter().string(from: Date())
-                            let payloadTextSourceTag = "[S]"
+                            let payloadTextSourceTag = metadata.payloadTextSourceTag ?? "[S]"
 
                             try await sql.raw("""
                             INSERT INTO asset_payload_texts
@@ -1237,6 +1241,8 @@ struct AIHOSAssetServer {
                             print("payloadTextLength: \(payloadText.count)")
                         } else {
                             print("No payload_text provided for sync payload")
+                            print("multipartPayloadTextPresent: \(payload.payloadText != nil)")
+                            print("metadataPayloadTextPresent: \(metadata.payloadText != nil)")
                         }
                     }
 
