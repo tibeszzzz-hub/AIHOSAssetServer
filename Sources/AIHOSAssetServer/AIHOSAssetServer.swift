@@ -22,6 +22,7 @@ struct SyncMetadata: Codable {
 struct MultipartSyncPayload: Content {
     let metadata: String
     let image: File
+    let payloadText: String?
 }
 
 struct MultipartAudioPayload: Content {
@@ -1217,6 +1218,26 @@ struct AIHOSAssetServer {
                         INSERT INTO asset_files (id, "assetRecordID", "fileName")
                         VALUES (\(bind: fileID), \(bind: recordID), \(bind: storedFileName));
                         """).run()
+
+                        if let payloadText = payload.payloadText, !payloadText.isEmpty {
+                            let payloadTextID = UUID()
+                            let createdAt = ISO8601DateFormatter().string(from: Date())
+                            let payloadTextSourceTag = "[S]"
+
+                            try await sql.raw("""
+                            INSERT INTO asset_payload_texts
+                            (id, "assetRecordID", payload_text, source_tag, created_at)
+                            VALUES
+                            (\(bind: payloadTextID), \(bind: recordID), \(bind: payloadText), \(bind: payloadTextSourceTag), \(bind: createdAt));
+                            """).run()
+
+                            print("Transactional payload_text INSERT PASS")
+                            print("payloadTextID: \(payloadTextID.uuidString)")
+                            print("payloadTextSourceTag: \(payloadTextSourceTag)")
+                            print("payloadTextLength: \(payloadText.count)")
+                        } else {
+                            print("No payload_text provided for sync payload")
+                        }
                     }
 
                     print("Transactional asset_record INSERT PASS")
