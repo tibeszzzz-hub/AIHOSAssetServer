@@ -18,6 +18,7 @@ struct SyncMetadata: Codable {
     let laneKey: String?
     let payloadText: String?
     let payloadTextSourceTag: String?
+    let observationID: String?
 }
 
 
@@ -1315,6 +1316,18 @@ struct AIHOSAssetServer {
                 return .badRequest
             }
 
+            // Validate observationID before any DB write (Build Atom 5B-3)
+            let sharedObservationID: UUID?
+            if let rawObservationID = metadata.observationID, !rawObservationID.isEmpty {
+                guard let parsedObservationID = UUID(uuidString: rawObservationID) else {
+                    print("Invalid observationID received: \(rawObservationID)")
+                    return .badRequest
+                }
+                sharedObservationID = parsedObservationID
+            } else {
+                sharedObservationID = nil
+            }
+
             let imageSize = payload.image.data.readableBytes
             let storedFileName = metadata.fileName ?? "\(UUID().uuidString).jpg"
             let storedFilePath = storageDirectory + "/" + storedFileName
@@ -1340,12 +1353,23 @@ struct AIHOSAssetServer {
                         throw Abort(.internalServerError, reason: "SQL database unavailable inside transaction")
                     }
 
-                    let recordID = UUID()
+                    let recordID = sharedObservationID ?? UUID()
                     let fileID = UUID()
+
+                    let existingRecordRows = try await sql.raw("""
+                    SELECT id FROM asset_records WHERE id = \(bind: recordID);
+                    """).all()
+
+                    if existingRecordRows.isEmpty {
+                        print("SHARED OBSERVATION IDENTITY: NEW asset_record CREATED: \(recordID.uuidString)")
+                    } else {
+                        print("SHARED OBSERVATION IDENTITY: EXISTING asset_record REUSED: \(recordID.uuidString)")
+                    }
 
                     try await sql.raw("""
                     INSERT INTO asset_records (id, "captureTimestamp", "sourceTag", lane_key)
-                    VALUES (\(bind: recordID), \(bind: metadata.captureTimestamp), \(bind: metadata.sourceTag), \(bind: laneKey));
+                    VALUES (\(bind: recordID), \(bind: metadata.captureTimestamp), \(bind: metadata.sourceTag), \(bind: laneKey))
+                    ON CONFLICT (id) DO NOTHING;
                     """).run()
 
                     if forceTransactionalFailure {
@@ -1441,6 +1465,18 @@ struct AIHOSAssetServer {
                 return .badRequest
             }
 
+            // Validate observationID before any DB write (Build Atom 5B-3)
+            let sharedObservationID: UUID?
+            if let rawObservationID = metadata.observationID, !rawObservationID.isEmpty {
+                guard let parsedObservationID = UUID(uuidString: rawObservationID) else {
+                    print("Invalid observationID received: \(rawObservationID)")
+                    return .badRequest
+                }
+                sharedObservationID = parsedObservationID
+            } else {
+                sharedObservationID = nil
+            }
+
             let audioSize = payload.audio.data.readableBytes
             let storedFileName = metadata.fileName ?? "\(UUID().uuidString).m4a"
             let storedFilePath = storageDirectory + "/" + storedFileName
@@ -1470,12 +1506,23 @@ struct AIHOSAssetServer {
                         throw Abort(.internalServerError, reason: "SQL database unavailable inside audio transaction")
                     }
 
-                    let recordID = UUID()
+                    let recordID = sharedObservationID ?? UUID()
                     let fileID = UUID()
+
+                    let existingRecordRows = try await sql.raw("""
+                    SELECT id FROM asset_records WHERE id = \(bind: recordID);
+                    """).all()
+
+                    if existingRecordRows.isEmpty {
+                        print("SHARED OBSERVATION IDENTITY: NEW asset_record CREATED: \(recordID.uuidString)")
+                    } else {
+                        print("SHARED OBSERVATION IDENTITY: EXISTING asset_record REUSED: \(recordID.uuidString)")
+                    }
 
                     try await sql.raw("""
                     INSERT INTO asset_records (id, "captureTimestamp", "sourceTag", lane_key)
-                    VALUES (\(bind: recordID), \(bind: metadata.captureTimestamp), \(bind: metadata.sourceTag), \(bind: laneKey));
+                    VALUES (\(bind: recordID), \(bind: metadata.captureTimestamp), \(bind: metadata.sourceTag), \(bind: laneKey))
+                    ON CONFLICT (id) DO NOTHING;
                     """).run()
 
                     try await sql.raw("""
