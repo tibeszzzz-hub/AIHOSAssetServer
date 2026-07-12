@@ -756,7 +756,7 @@ struct CreateStandardStatusUpdates: AsyncMigration {
 }
 
 // Lane key allowlist and helper
-let allowedLaneKeys: Set<String> = ["kitchen", "service", "finance", "unassigned"]
+let allowedLaneKeys: Set<String> = ["kitchen", "service", "finance", "unassigned", "bar", "cleaning", "economy"]
 func validatedLaneKey(_ laneKey: String?) -> String? {
     guard let laneKey else { return "unassigned" }
     guard allowedLaneKeys.contains(laneKey) else { return nil }
