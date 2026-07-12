@@ -847,7 +847,42 @@ func humanReadableTimestamp(_ timestamp: String) -> String {
     formatter.dateFormat = "yyyy-MM-dd HH:mm"
     return formatter.string(from: date)
 }
+func resolvedStorageDirectory() throws -> String {
+    guard let rawStoragePath = Environment.get("STORAGE_PATH")?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !rawStoragePath.isEmpty else {
+        print("STORAGE_PATH missing — server startup refused")
+        throw Abort(.internalServerError, reason: "STORAGE_PATH is required")
+    }
 
+    guard rawStoragePath.hasPrefix("/") else {
+        print("STORAGE_PATH invalid — absolute path required: \(rawStoragePath)")
+        throw Abort(.internalServerError, reason: "STORAGE_PATH must be an absolute path")
+    }
+
+    let normalizedStoragePath = rawStoragePath.hasSuffix("/")
+        ? String(rawStoragePath.dropLast())
+        : rawStoragePath
+
+    do {
+        try FileManager.default.createDirectory(
+            atPath: normalizedStoragePath,
+            withIntermediateDirectories: true
+        )
+
+        let writeTestPath = normalizedStoragePath + "/.aihos-storage-write-test"
+        try Data("ok".utf8).write(to: URL(fileURLWithPath: writeTestPath))
+        try FileManager.default.removeItem(atPath: writeTestPath)
+    } catch {
+        print("STORAGE_PATH validation failed: \(error)")
+        throw Abort(.internalServerError, reason: "STORAGE_PATH is not writable")
+    }
+
+    print("Storage configuration PASS")
+    print("STORAGE_PATH: \(rawStoragePath)")
+    print("storageDirectory: \(normalizedStoragePath)")
+
+    return normalizedStoragePath
+}
 func isStandardActive(
     standardID: UUID,
     at evaluationTimestamp: String,
@@ -1092,7 +1127,8 @@ struct AIHOSAssetServer {
 
         try await app.autoMigrate()
         print("Database migrations executed")
-
+        let storageDirectory = try resolvedStorageDirectory()
+        print("workingDirectory: \(app.directory.workingDirectory)")
         app.get("health", "db") { req async -> Response in
             req.logger.info("DB HEALTH ROUTE ENTERED")
 
@@ -1185,8 +1221,7 @@ struct AIHOSAssetServer {
                 return Response(status: .badRequest)
             }
 
-            let workingDirectory = app.directory.workingDirectory
-            let testDirectory = workingDirectory + "PayloadStorage/OCRTest"
+            let testDirectory = storageDirectory + "/OCRTest"
             let testFileName = "vision-ocr-test-\(UUID().uuidString).jpg"
             let testFilePath = testDirectory + "/" + testFileName
             let testFileURL = URL(fileURLWithPath: testFilePath)
@@ -1274,6 +1309,7 @@ struct AIHOSAssetServer {
             }
 
             // Validate laneKey before any DB write
+            print("Received laneKey: \(metadata.laneKey ?? "nil")")
             guard let laneKey = validatedLaneKey(metadata.laneKey) else {
                 print("Lane validation failed")
                 return .badRequest
@@ -1281,8 +1317,6 @@ struct AIHOSAssetServer {
 
             let imageSize = payload.image.data.readableBytes
             let storedFileName = metadata.fileName ?? "\(UUID().uuidString).jpg"
-            let workingDirectory = app.directory.workingDirectory
-            let storageDirectory = workingDirectory + "PayloadStorage"
             let storedFilePath = storageDirectory + "/" + storedFileName
             let forceTransactionalFailure = storedFileName == "test-force-transaction-failure.jpg"
 
@@ -1409,8 +1443,6 @@ struct AIHOSAssetServer {
 
             let audioSize = payload.audio.data.readableBytes
             let storedFileName = metadata.fileName ?? "\(UUID().uuidString).m4a"
-            let workingDirectory = app.directory.workingDirectory
-            let storageDirectory = workingDirectory + "PayloadStorage"
             let storedFilePath = storageDirectory + "/" + storedFileName
 
             do {
@@ -1498,22 +1530,37 @@ struct AIHOSAssetServer {
                 ORDER BY asset_records."captureTimestamp" ASC
             """).all()
 
-            var records = rows.map { row -> [String: String] in
-                let id = try! row.decode(column: "id", as: UUID.self).uuidString
-                let captureTimestamp = try! row.decode(column: "captureTimestamp", as: String.self)
-                let sourceTag = try! row.decode(column: "sourceTag", as: String.self)
-                let laneKey = try! row.decode(column: "lane_key", as: String.self)
-                let fileName = try! row.decode(column: "fileName", as: String.self)
 
-                return [
+            var records: [[String: String]] = []
+            var missingFileCount = 0
+
+            for row in rows {
+                let id = try row.decode(column: "id", as: UUID.self).uuidString
+                let captureTimestamp = try row.decode(column: "captureTimestamp", as: String.self)
+                let sourceTag = try row.decode(column: "sourceTag", as: String.self)
+                let laneKey = try row.decode(column: "lane_key", as: String.self)
+                let fileName = try row.decode(column: "fileName", as: String.self)
+                let filePath = storageDirectory + "/" + fileName
+
+                guard FileManager.default.fileExists(atPath: filePath) else {
+                    missingFileCount += 1
+                    print("Observation retrieval skipped missing payload file: \(fileName)")
+                    continue
+                }
+
+                records.append([
                     "id": id,
                     "captureTimestamp": captureTimestamp,
                     "displayTimestamp": humanReadableTimestamp(captureTimestamp),
                     "sourceTag": sourceTag,
                     "lane_key": laneKey,
                     "fileName": fileName
-                ]
+                ])
             }
+
+            print("Observation retrieval file integrity filter PASS")
+            print("Observation records returned: \(records.count)")
+            print("Observation records skipped missing files: \(missingFileCount)")
 
             records.sort { first, second in
                 let firstDate = parsedTimestampDate(first["captureTimestamp"] ?? "") ?? Date.distantPast
@@ -2129,8 +2176,6 @@ struct AIHOSAssetServer {
                 return Response(status: .badRequest)
             }
 
-            let workingDirectory = app.directory.workingDirectory
-            let storageDirectory = workingDirectory + "PayloadStorage"
             let filePath = storageDirectory + "/" + fileName
 
             guard FileManager.default.fileExists(atPath: filePath) else {
@@ -2139,6 +2184,7 @@ struct AIHOSAssetServer {
             }
 
             print("File delivery PASS: \(fileName)")
+            print("File delivery path: \(filePath)")
             return req.fileio.streamFile(at: filePath)
         }
 
@@ -2291,8 +2337,6 @@ struct AIHOSAssetServer {
             }
 
             let fileName = try fileRows[0].decode(column: "fileName", as: String.self)
-            let workingDirectory = app.directory.workingDirectory
-            let storageDirectory = workingDirectory + "PayloadStorage"
             let filePath = storageDirectory + "/" + fileName
             let fileURL = URL(fileURLWithPath: filePath)
 
