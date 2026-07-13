@@ -53,6 +53,24 @@ struct ObservationDecisionTraceResponse: Content {
     let createdAt: String
 }
 
+struct GroupedObservationResponse: Content {
+    let id: String
+    let captureTimestamp: String
+    let displayTimestamp: String
+    let sourceTag: String
+    let laneKey: String
+    let files: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case captureTimestamp
+        case displayTimestamp
+        case sourceTag
+        case laneKey = "lane_key"
+        case files
+    }
+}
+
 struct PayloadTextRequest: Content {
     let payloadText: String?
     let sourceTag: String
@@ -1578,7 +1596,8 @@ struct AIHOSAssetServer {
             """).all()
 
 
-            var records: [[String: String]] = []
+            var groupOrder: [String] = []
+            var groupsByID: [String: GroupedObservationResponse] = [:]
             var missingFileCount = 0
 
             for row in rows {
@@ -1595,23 +1614,37 @@ struct AIHOSAssetServer {
                     continue
                 }
 
-                records.append([
-                    "id": id,
-                    "captureTimestamp": captureTimestamp,
-                    "displayTimestamp": humanReadableTimestamp(captureTimestamp),
-                    "sourceTag": sourceTag,
-                    "lane_key": laneKey,
-                    "fileName": fileName
-                ])
+                if let existing = groupsByID[id] {
+                    groupsByID[id] = GroupedObservationResponse(
+                        id: existing.id,
+                        captureTimestamp: existing.captureTimestamp,
+                        displayTimestamp: existing.displayTimestamp,
+                        sourceTag: existing.sourceTag,
+                        laneKey: existing.laneKey,
+                        files: existing.files + [fileName]
+                    )
+                } else {
+                    groupOrder.append(id)
+                    groupsByID[id] = GroupedObservationResponse(
+                        id: id,
+                        captureTimestamp: captureTimestamp,
+                        displayTimestamp: humanReadableTimestamp(captureTimestamp),
+                        sourceTag: sourceTag,
+                        laneKey: laneKey,
+                        files: [fileName]
+                    )
+                }
             }
+
+            var records: [GroupedObservationResponse] = groupOrder.compactMap { groupsByID[$0] }
 
             print("Observation retrieval file integrity filter PASS")
             print("Observation records returned: \(records.count)")
             print("Observation records skipped missing files: \(missingFileCount)")
 
             records.sort { first, second in
-                let firstDate = parsedTimestampDate(first["captureTimestamp"] ?? "") ?? Date.distantPast
-                let secondDate = parsedTimestampDate(second["captureTimestamp"] ?? "") ?? Date.distantPast
+                let firstDate = parsedTimestampDate(first.captureTimestamp) ?? Date.distantPast
+                let secondDate = parsedTimestampDate(second.captureTimestamp) ?? Date.distantPast
                 return firstDate > secondDate
             }
 
