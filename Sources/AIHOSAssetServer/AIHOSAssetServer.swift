@@ -31,6 +31,7 @@ struct MultipartSyncPayload: Content {
 struct MultipartAudioPayload: Content {
     let metadata: String
     let audio: File
+    let payloadText: String?
 }
 
 
@@ -1548,6 +1549,30 @@ struct AIHOSAssetServer {
                     VALUES (\(bind: fileID), \(bind: recordID), \(bind: storedFileName));
                     """).run()
 
+                    let resolvedPayloadText = payload.payloadText ?? metadata.payloadText
+
+                    if let payloadText = resolvedPayloadText, !payloadText.isEmpty {
+                        let payloadTextID = UUID()
+                        let createdAt = ISO8601DateFormatter().string(from: Date())
+                        let payloadTextSourceTag = metadata.payloadTextSourceTag ?? "[S]"
+
+                        try await sql.raw("""
+                        INSERT INTO asset_payload_texts
+                        (id, "assetRecordID", payload_text, source_tag, created_at)
+                        VALUES
+                        (\(bind: payloadTextID), \(bind: recordID), \(bind: payloadText), \(bind: payloadTextSourceTag), \(bind: createdAt));
+                        """).run()
+
+                        print("Audio transactional payload_text INSERT PASS")
+                        print("payloadTextID: \(payloadTextID.uuidString)")
+                        print("payloadTextSourceTag: \(payloadTextSourceTag)")
+                        print("payloadTextLength: \(payloadText.count)")
+                    } else {
+                        print("No payload_text provided for audio payload")
+                        print("multipartPayloadTextPresent: \(payload.payloadText != nil)")
+                        print("metadataPayloadTextPresent: \(metadata.payloadText != nil)")
+                    }
+
                     print("Audio asset_record INSERT PASS")
                     print("Audio asset_file INSERT PASS")
                     print("assetRecordID: \(recordID.uuidString)")
@@ -1574,7 +1599,6 @@ struct AIHOSAssetServer {
             print("laneKey: \(laneKey)")
             print("fileName: \(storedFileName)")
             print("storedFilePath: \(storedFilePath)")
-            print("Source Awareness: original audio stored as asset file; no transcription or payload_text generated")
 
             return .ok
         }
