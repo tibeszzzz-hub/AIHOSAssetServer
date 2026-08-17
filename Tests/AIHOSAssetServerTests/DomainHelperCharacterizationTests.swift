@@ -229,52 +229,81 @@ struct TimestampHelperTests {
 
 // MARK: - Legacy timestamp helper
 
-@Suite("Legacy timestamp skip query")
-struct LegacyTimestampQueryTests {
+@Suite("Timestamp read-expectation diagnostic query")
+struct TimestampDiagnosticQueryTests {
 
     /// The SQL is built as an `SQLQueryString`, which has no dialect-free rendering, so
     /// this is characterized from the declaration in the source instead of by executing
-    /// or serializing it. No database is touched, as A0 requires.
+    /// or serializing it. No database is touched.
+    ///
+    /// Updated in A1a because the query's diagnostic form changed on purpose: it was an
+    /// unbounded per-row SELECT and is now a bounded aggregate. No assertion was
+    /// weakened — the boundedness checks below are strictly stronger than what the
+    /// previous shape could be held to.
     private func queryBody() throws -> [String] {
         let source = try serverSourceText()
 
         let body = declarationBody(
-            startingWithLinePrefix: "func legacyTimestampSkipLogQuery(",
+            startingWithLinePrefix: "func timestampReadExpectationDiagnosticQuery(",
             inSource: source
         )
 
         // Positive control: a moved or renamed declaration must fail loudly rather than
         // hand back an empty body that satisfies every "does not contain" assertion.
-        #expect(body != nil, "legacyTimestampSkipLogQuery declaration not found in the server source")
+        #expect(body != nil, "timestampReadExpectationDiagnosticQuery declaration not found in the server source")
         #expect((body ?? []).isEmpty == false)
 
         return body ?? []
     }
 
-    @Test("The query selects only non-ISO rows and is unbounded")
+    @Test("The query is an aggregate over asset_records using the ISO read predicate")
     func queryShape() throws {
-        let body = try queryBody()
-        let sql = body.joined(separator: "\n")
+        let sql = try queryBody().joined(separator: "\n")
 
         #expect(sql.contains("FROM asset_records"))
         #expect(sql.contains(#""captureTimestamp" !~"#))
-        #expect(sql.contains(#"ORDER BY "captureTimestamp" ASC"#))
-
-        // Pinned as current behaviour and as the code-level cause of the log-volume
-        // finding (KSPS-021 §7): there is no LIMIT, so the result set — and therefore
-        // the three log lines emitted per row — grows with the whole table. A1 owns the
-        // change; A0 only pins the starting point so the change is visible in a diff.
-        #expect(sql.uppercased().contains("LIMIT") == false)
+        #expect(sql.contains("COUNT(*)"))
+        #expect(sql.contains(#"AS "totalCount""#))
+        #expect(sql.contains(#"AS "exampleRecordIDs""#))
     }
 
-    @Test("The context parameter never reaches the SQL (SF-C, independently verified by GS)")
-    func contextParameterIsUnused() throws {
+    @Test("The example set is bounded by an explicit LIMIT")
+    func queryIsBounded() throws {
+        let sql = try queryBody().joined(separator: "\n")
+
+        // This is the whole point of A1a: the number of rows read for diagnostics no
+        // longer grows with the table.
+        #expect(sql.uppercased().contains("LIMIT"))
+        #expect(sql.contains("timestampDiagnosticExampleLimit"))
+        #expect(timestampDiagnosticExampleLimit == 5)
+    }
+
+    @Test("No timestamp value is selected, so none can reach a log line")
+    func queryNeverSelectsTimestampValues() throws {
         let body = try queryBody()
 
-        // The parameter is accepted and then dropped; the calling sites express context
-        // through their own hard-coded print statements instead. Pinned so that removing
-        // the dead parameter later is provably behaviour-neutral.
-        #expect(body.contains { $0.contains("context") } == false,
-                "context is now referenced inside the query body: \(body)")
+        // `captureTimestamp` may appear only inside the WHERE predicate, never as a
+        // selected column. Operational timestamps are not log material.
+        let selectedTimestampLines = body.filter {
+            $0.contains("captureTimestamp") && !$0.contains("!~")
+        }
+
+        #expect(selectedTimestampLines.isEmpty, "captureTimestamp is selected, not just filtered on: \(selectedTimestampLines)")
+    }
+
+    @Test("The declaration is read-only and takes no caller-supplied context")
+    func queryIsReadOnlyAndParameterless() throws {
+        let source = try serverSourceText()
+        let sql = try queryBody().joined(separator: "\n").uppercased()
+
+        for mutatingKeyword in ["INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "TRUNCATE"] {
+            #expect(sql.contains(mutatingKeyword) == false, "Diagnostic query contains \(mutatingKeyword)")
+        }
+
+        // SF-C is resolved by construction: the dead `context` parameter is gone rather
+        // than carried forward, and the calling site supplies its own neutral label.
+        #expect(source.contains("legacyTimestampSkipLogQuery") == false,
+                "The former helper name is still present in the server source")
+        #expect(source.contains("func timestampReadExpectationDiagnosticQuery() -> SQLQueryString"))
     }
 }

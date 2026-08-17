@@ -26,7 +26,7 @@ import Foundation
 /// Every `ORDER BY` clause in the server source, in source order, normalised to single
 /// spaces. Ten clauses across nine call sites plus the shared legacy-skip helper.
 private let expectedOrderByClauses: [String] = [
-    #"ORDER BY "captureTimestamp" ASC"#,                    // legacyTimestampSkipLogQuery
+    "ORDER BY id",                                          // timestampReadExpectationDiagnosticQuery (A1a)
     "ORDER BY changed_at DESC",                             // isStandardActive — latest status wins
     #"ORDER BY asset_records."captureTimestamp" ASC"#,      // GET /api/v1/records
     "ORDER BY created_at ASC",                              // GET /api/v1/standards

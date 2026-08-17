@@ -810,15 +810,102 @@ func hourFromExpectedWindow(_ expectedWindow: String) -> Int? {
     return hour
 }
 
-func legacyTimestampSkipLogQuery(context: String) -> SQLQueryString {
+// MARK: - Timestamp read-expectation diagnostic
+//
+// `asset_records."captureTimestamp"` is stored in the canonical AIHOS format: a
+// 10-digit Unix epoch in seconds, UTC (WFOS-20260817-NBPS-001). Those rows are
+// correct, current data — they are neither legacy nor invalid, and nothing here
+// describes them as such.
+//
+// The gap and pulse calculations further down still read timestamps through an ISO
+// 8601 prefix predicate, so today they match none of the stored rows. Making those
+// calculations epoch-correct is a separate, already-scoped product change and is not
+// done here. This diagnostic exists only to keep that mismatch visible while that
+// work is pending, at a fixed and bounded cost.
+//
+// Bounded on purpose: one aggregated row, at most one log line per request, at most
+// `timestampDiagnosticExampleLimit` example record IDs, and no timestamp, payload,
+// credential or hotel data of any kind. The previous per-row form emitted three log
+// lines for every matching row; at the measured 301 rows that was 1806 log lines per
+// gaps+pulse pair, enough to push real machine-auth denials out of the platform's
+// log budget (WFOS-20260817-AKSPS-004, WFOS-20260817-KSPS-026).
+
+/// Upper bound on example record IDs carried by the diagnostic.
+///
+/// Keeps the emitted log line a fixed size no matter how large `asset_records` grows.
+let timestampDiagnosticExampleLimit = 5
+
+/// Aggregated, bounded diagnostic result.
+///
+/// Deliberately carries no timestamp value: the count and a few record IDs are enough
+/// to act on, and stored timestamps are operational data that does not belong in logs.
+struct TimestampReadExpectationDiagnostic {
+    let totalCount: Int
+    let exampleRecordIDs: [String]
+}
+
+/// Read-only aggregate: one row, one exact count, at most five example IDs.
+///
+/// The predicate is the same one the calculations use, applied here purely as
+/// diagnostics — it identifies rows the current ISO read expectation cannot see, not
+/// rows that are wrong.
+func timestampReadExpectationDiagnosticQuery() -> SQLQueryString {
     """
         SELECT
-            id,
-            "captureTimestamp"
+            COUNT(*) AS "totalCount",
+            COALESCE((
+                SELECT STRING_AGG(sample.id::text, ',')
+                FROM (
+                    SELECT id
+                    FROM asset_records
+                    WHERE "captureTimestamp" !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:'
+                    ORDER BY id
+                    LIMIT \(bind: timestampDiagnosticExampleLimit)
+                ) AS sample
+            ), '') AS "exampleRecordIDs"
         FROM asset_records
         WHERE "captureTimestamp" !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:'
-        ORDER BY "captureTimestamp" ASC
     """
+}
+
+/// Decodes the single aggregated row.
+///
+/// Returns `nil` when the query produced no row at all, so a broken or empty
+/// measurement can never be silently reported as a clean one.
+func timestampReadExpectationDiagnostic(
+    from rows: [any SQLRow]
+) throws -> TimestampReadExpectationDiagnostic? {
+    guard let row = rows.first else { return nil }
+
+    let totalCount = try row.decode(column: "totalCount", as: Int.self)
+    let joinedExampleIDs = try row.decode(column: "exampleRecordIDs", as: String.self)
+
+    return TimestampReadExpectationDiagnostic(
+        totalCount: totalCount,
+        exampleRecordIDs: joinedExampleIDs.split(separator: ",").map(String.init)
+    )
+}
+
+/// Emits at most one structured line, and none at all when nothing matched.
+///
+/// Cost is O(1) in the number of matching rows — that is the entire point of this
+/// atom. The message states the mismatch neutrally in both directions: the rows are
+/// canonical, the read expectation is the part that is out of step.
+func logTimestampReadExpectationDiagnostic(
+    _ diagnostic: TimestampReadExpectationDiagnostic?,
+    calculation: String,
+    logger: Logger
+) {
+    guard let diagnostic, diagnostic.totalCount > 0 else { return }
+
+    logger.warning(
+        "captureTimestamp read-expectation mismatch: rows are stored in the canonical epoch format while this calculation reads an ISO 8601 prefix",
+        metadata: [
+            "calculation": .string(calculation),
+            "totalCount": .string(String(diagnostic.totalCount)),
+            "exampleRecordIDs": .string(diagnostic.exampleRecordIDs.joined(separator: ","))
+        ]
+    )
 }
 
 func iso8601DateStringForToday() -> String {
@@ -2653,14 +2740,12 @@ struct AIHOSAssetServer {
 
             var gaps: [[String: String]] = []
 
-            let skippedTimestampRows = try await sql.raw(legacyTimestampSkipLogQuery(context: "Gap calculation")).all()
-            for skippedRow in skippedTimestampRows {
-                let skippedID = try skippedRow.decode(column: "id", as: UUID.self).uuidString
-                let skippedTimestamp = try skippedRow.decode(column: "captureTimestamp", as: String.self)
-                print("Legacy timestamp detected — skipping for Gap calculation")
-                print("assetRecordID: \(skippedID)")
-                print("captureTimestamp: \(skippedTimestamp)")
-            }
+            let timestampDiagnosticRows = try await sql.raw(timestampReadExpectationDiagnosticQuery()).all()
+            logTimestampReadExpectationDiagnostic(
+                try timestampReadExpectationDiagnostic(from: timestampDiagnosticRows),
+                calculation: "gaps/mechanical",
+                logger: req.logger
+            )
 
             for standard in standards {
                 let standardID = try standard.decode(column: "id", as: UUID.self)
@@ -2755,14 +2840,12 @@ struct AIHOSAssetServer {
             var activeStandardsCount = 0
             var informationGapsCount = 0
 
-            let skippedTimestampRows = try await sql.raw(legacyTimestampSkipLogQuery(context: "Pulse calculation")).all()
-            for skippedRow in skippedTimestampRows {
-                let skippedID = try skippedRow.decode(column: "id", as: UUID.self).uuidString
-                let skippedTimestamp = try skippedRow.decode(column: "captureTimestamp", as: String.self)
-                print("Legacy timestamp detected — skipping for Pulse calculation")
-                print("assetRecordID: \(skippedID)")
-                print("captureTimestamp: \(skippedTimestamp)")
-            }
+            let timestampDiagnosticRows = try await sql.raw(timestampReadExpectationDiagnosticQuery()).all()
+            logTimestampReadExpectationDiagnostic(
+                try timestampReadExpectationDiagnostic(from: timestampDiagnosticRows),
+                calculation: "state/pulse",
+                logger: req.logger
+            )
 
             for standard in gapsRows {
                 let standardID = try standard.decode(column: "id", as: UUID.self)
