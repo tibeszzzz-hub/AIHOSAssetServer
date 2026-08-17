@@ -1149,6 +1149,18 @@ struct AIHOSAssetServer {
         print("Database migrations executed")
         let storageDirectory = try resolvedStorageDirectory()
         print("workingDirectory: \(app.directory.workingDirectory)")
+
+        // Central machine-to-machine auth gate. Every production-affecting route below is
+        // registered on `apiV1` or `gated`, never on `app` — see MachineAuthGate.swift.
+        // The only route allowed on `app` is the liveness probe, which is classified in
+        // `unauthenticatedRouteAllowlist`; boot fails if anything else escapes the gate.
+        let machineCredential = MachineCredential.resolveFromEnvironment()
+        print(machineCredential.configurationStatusDescription)
+        let apiV1 = MachineGatedRoutes(application: app, pathPrefix: ["api", "v1"], credential: machineCredential)
+        let gated = MachineGatedRoutes(application: app, credential: machineCredential)
+
+        // Deliberately outside the gate: liveness probe only. Reports whether
+        // `SELECT 1` succeeded and exposes no product data, credentials or configuration.
         app.get("health", "db") { req async -> Response in
             req.logger.info("DB HEALTH ROUTE ENTERED")
 
@@ -1186,7 +1198,8 @@ struct AIHOSAssetServer {
             }
         }
 
-        app.get("test", "immutable") { req async throws -> HTTPStatus in
+        // Writes to asset_records in the production database - gated (PSKS-008).
+        gated.get("test", "immutable") { req async throws -> HTTPStatus in
             guard let sql = req.db as? SQLDatabase else {
                 return .internalServerError
             }
@@ -1231,7 +1244,8 @@ struct AIHOSAssetServer {
             return .ok
         }
 
-        app.on(.POST, "test", "vision-ocr", body: .collect(maxSize: "10mb")) { req async throws -> Response in
+        // Accepts uploads up to 10 MB and runs OCR on the server - gated (PSKS-008).
+        gated.on(.POST, "test", "vision-ocr", body: .collect(maxSize: "10mb")) { req async throws -> Response in
             let payload: MultipartSyncPayload
 
             do {
@@ -1308,7 +1322,7 @@ struct AIHOSAssetServer {
             return response
         }
 
-        app.on(.POST, "api", "v1", "sync", body: .collect(maxSize: "10mb")) { req async throws -> HTTPStatus in
+        apiV1.on(.POST, "sync", body: .collect(maxSize: "10mb")) { req async throws -> HTTPStatus in
             let payload: MultipartSyncPayload
 
             do {
@@ -1459,7 +1473,7 @@ struct AIHOSAssetServer {
             return .ok
         }
 
-        app.on(.POST, "api", "v1", "audio", body: .collect(maxSize: "20mb")) { req async throws -> HTTPStatus in
+        apiV1.on(.POST, "audio", body: .collect(maxSize: "20mb")) { req async throws -> HTTPStatus in
             let payload: MultipartAudioPayload
 
             do {
@@ -1603,7 +1617,7 @@ struct AIHOSAssetServer {
             return .ok
         }
 
-        app.get("api", "v1", "records") { req async throws -> Response in
+        apiV1.get("records") { req async throws -> Response in
             let sql = req.db as! SQLDatabase
 
             let rows = try await sql.raw("""
@@ -1677,7 +1691,7 @@ struct AIHOSAssetServer {
             return response
         }
 
-        app.get("api", "v1", "standards") { req async throws -> Response in
+        apiV1.get("standards") { req async throws -> Response in
             guard let sql = req.db as? SQLDatabase else {
                 return Response(status: .internalServerError)
             }
@@ -1730,7 +1744,7 @@ struct AIHOSAssetServer {
             return response
         }
 
-        app.post("api", "v1", "standards") { req async throws -> Response in
+        apiV1.post("standards") { req async throws -> Response in
             guard let sql = req.db as? SQLDatabase else {
                 return Response(status: .internalServerError)
             }
@@ -1835,7 +1849,7 @@ struct AIHOSAssetServer {
             return response
         }
 
-        app.on(.PATCH, "api", "v1", "standards", ":standardID", "status") { req async throws -> Response in
+        apiV1.on(.PATCH, "standards", ":standardID", "status") { req async throws -> Response in
             guard let sql = req.db as? SQLDatabase else {
                 return Response(status: .internalServerError)
             }
@@ -1980,7 +1994,7 @@ struct AIHOSAssetServer {
             return response
         }
 
-        app.get("api", "v1", "standards", ":standardID", "status-updates") { req async throws -> Response in
+        apiV1.get("standards", ":standardID", "status-updates") { req async throws -> Response in
             guard let sql = req.db as? SQLDatabase else {
                 return Response(status: .internalServerError)
             }
@@ -2032,7 +2046,7 @@ struct AIHOSAssetServer {
             return response
         }
 
-        app.get("api", "v1", "shift-handover", "log") { req async throws -> Response in
+        apiV1.get("shift-handover", "log") { req async throws -> Response in
             guard let sql = req.db as? SQLDatabase else {
                 return Response(status: .internalServerError)
             }
@@ -2129,7 +2143,7 @@ struct AIHOSAssetServer {
             return response
         }
 
-        app.post("api", "v1", "assets", ":assetID", "decision-traces") { req async throws -> Response in
+        apiV1.post("assets", ":assetID", "decision-traces") { req async throws -> Response in
             guard let sql = req.db as? SQLDatabase else {
                 return Response(status: .internalServerError)
             }
@@ -2211,7 +2225,7 @@ struct AIHOSAssetServer {
             return response
         }
 
-        app.get("api", "v1", "assets", ":assetID", "decision-traces") { req async throws -> Response in
+        apiV1.get("assets", ":assetID", "decision-traces") { req async throws -> Response in
             guard let sql = req.db as? SQLDatabase else {
                 return Response(status: .internalServerError)
             }
@@ -2275,7 +2289,7 @@ struct AIHOSAssetServer {
             return response
         }
 
-        app.get("api", "v1", "files", ":fileName") { req async throws -> Response in
+        apiV1.get("files", ":fileName") { req async throws -> Response in
             guard let fileName = req.parameters.get("fileName") else {
                 return Response(status: .badRequest)
             }
@@ -2292,7 +2306,7 @@ struct AIHOSAssetServer {
             return req.fileio.streamFile(at: filePath)
         }
 
-        app.post("api", "v1", "assets", ":assetID", "payload-text") { req async throws -> Response in
+        apiV1.post("assets", ":assetID", "payload-text") { req async throws -> Response in
             guard let sql = req.db as? SQLDatabase else {
                 return Response(status: .internalServerError)
             }
@@ -2358,7 +2372,7 @@ struct AIHOSAssetServer {
             return response
         }
 
-        app.get("api", "v1", "assets", ":assetID", "payload-text") { req async throws -> Response in
+        apiV1.get("assets", ":assetID", "payload-text") { req async throws -> Response in
             guard let sql = req.db as? SQLDatabase else {
                 return Response(status: .internalServerError)
             }
@@ -2405,7 +2419,7 @@ struct AIHOSAssetServer {
             return response
         }
 
-        app.post("api", "v1", "assets", ":assetID", "transcribe-audio") { req async throws -> Response in
+        apiV1.post("assets", ":assetID", "transcribe-audio") { req async throws -> Response in
             guard let sql = req.db as? SQLDatabase else {
                 return Response(status: .internalServerError)
             }
@@ -2525,7 +2539,7 @@ struct AIHOSAssetServer {
             return response
         }
 
-        app.post("api", "v1", "standards", "night-photo") { req async throws -> HTTPStatus in
+        apiV1.post("standards", "night-photo") { req async throws -> HTTPStatus in
             guard let sql = req.db as? SQLDatabase else {
                 return .internalServerError
             }
@@ -2550,7 +2564,7 @@ struct AIHOSAssetServer {
             return .ok
         }
 
-        app.post("api", "v1", "decisions") { req async throws -> Response in
+        apiV1.post("decisions") { req async throws -> Response in
             guard let sql = req.db as? SQLDatabase else {
                 return Response(status: .internalServerError)
             }
@@ -2610,7 +2624,7 @@ struct AIHOSAssetServer {
             return response
         }
 
-        app.get("api", "v1", "gaps", "mechanical") { req async throws -> Response in
+        apiV1.get("gaps", "mechanical") { req async throws -> Response in
             guard let sql = req.db as? SQLDatabase else {
                 return Response(status: .internalServerError)
             }
@@ -2719,7 +2733,7 @@ struct AIHOSAssetServer {
             return response
         }
 
-        app.get("api", "v1", "state", "pulse") { req async throws -> Response in
+        apiV1.get("state", "pulse") { req async throws -> Response in
             guard let sql = req.db as? SQLDatabase else {
                 return Response(status: .internalServerError)
             }
@@ -2829,6 +2843,11 @@ struct AIHOSAssetServer {
             ])
             return response
         }
+
+        // Fail-closed coverage check: refuse to start if any route was registered
+        // outside the central gate without an explicit unauthenticated classification.
+        try verifyMachineGateCoverage(routes: app.routes.all)
+        print("Machine auth gate coverage verified for \(app.routes.all.count) registered routes")
 
         print("AIHOS Asset Server starting")
 

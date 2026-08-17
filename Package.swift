@@ -30,7 +30,12 @@ let package = Package(
         ),
         .testTarget(
             name: "AIHOSAssetServerTests",
-            dependencies: ["AIHOSAssetServer"]
+            dependencies: [
+                "AIHOSAssetServer",
+                // Test-only product of the vapor package already used by the server target.
+                // Needed to exercise real routing/middleware behaviour in tests.
+                .product(name: "VaporTesting", package: "vapor")
+            ]
         ),
     ],
     swiftLanguageModes: [.v6]
