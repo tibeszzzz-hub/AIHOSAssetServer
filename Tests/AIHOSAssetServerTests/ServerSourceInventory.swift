@@ -85,6 +85,37 @@ func runnerSourceTexts() throws -> [(name: String, text: String)] {
     try swiftSourceTexts(in: runnerDirectoryURL)
 }
 
+/// The `Sources/` root, parent of every target directory.
+let sourcesRootDirectoryURL: URL = serverModuleDirectoryURL.deletingLastPathComponent()
+
+/// Immediate subdirectory names under `Sources/`, sorted.
+///
+/// Enumerated mechanically (GS-6) so that a future target directory cannot appear
+/// without the safety net noticing: an unlisted directory would otherwise hold
+/// production code that no scan reads and no test covers.
+func sourcesSubdirectoryNames() throws -> [String] {
+    try FileManager.default
+        .contentsOfDirectory(at: sourcesRootDirectoryURL, includingPropertiesForKeys: [.isDirectoryKey])
+        .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+        .map(\.lastPathComponent)
+        .sorted()
+}
+
+/// Every declaration carrying `public`, across the given sources.
+///
+/// Matches the keyword wherever it stands in a declaration rather than only at line
+/// start, so `final public func` or `@MainActor public struct` cannot slip past the
+/// surface guard (GS-7). Comment lines are skipped, so prose about the word does not
+/// register as a declaration.
+func publicDeclarations(in sources: [(name: String, text: String)]) -> [String] {
+    sources.flatMap { source in
+        trimmedSourceLines(source.text).filter { line in
+            guard !line.hasPrefix("//") else { return false }
+            return line.range(of: #"(^|\s)public\s"#, options: .regularExpression) != nil
+        }
+    }
+}
+
 /// Every production Swift source across both targets, library first.
 func productionSourceTexts() throws -> [(name: String, text: String)] {
     try serverModuleSourceTexts() + runnerSourceTexts()

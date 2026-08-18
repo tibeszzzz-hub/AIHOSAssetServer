@@ -22,12 +22,36 @@ import Foundation
 @Suite("F-B production source layout")
 struct ProductionSourceLayoutTests {
 
-    @Test("The library target is still exactly its two files, in the unchanged directory")
+    @Test("The library target is exactly its three files, in the unchanged directory")
     func libraryLayoutUnchanged() throws {
         let module = try serverModuleSourceTexts()
 
-        #expect(module.map(\.name) == ["AIHOSAssetServer.swift", "MachineAuthGate.swift"])
+        // F-C1 added APIContentDTOs.swift by extraction. The set is pinned rather than
+        // counted so a fourth file cannot appear unnoticed.
+        #expect(module.map(\.name) == [
+            "AIHOSAssetServer.swift",
+            "APIContentDTOs.swift",
+            "MachineAuthGate.swift"
+        ])
         #expect(serverModuleDirectoryURL.lastPathComponent == "AIHOSAssetServer")
+    }
+
+    @Test("Sources holds exactly the two known target directories")
+    func sourcesSubdirectoriesArePinned() throws {
+        // GS-6: enumerated mechanically, so the next target directory cannot fall
+        // silently outside the safety net the way a new file inside a scanned
+        // directory never could.
+        #expect(try sourcesSubdirectoryNames() == ["AIHOSAssetServer", "AIHOSAssetServerRun"])
+    }
+
+    @Test("Every production source across both targets is inside the scan")
+    func productionScanCoversAllFour() throws {
+        #expect(try productionSourceTexts().map(\.name) == [
+            "AIHOSAssetServer.swift",
+            "APIContentDTOs.swift",
+            "MachineAuthGate.swift",
+            "main.swift"
+        ])
     }
 
     @Test("The locked main file resolves at its original path")
@@ -96,13 +120,15 @@ struct ProductionSourceLayoutTests {
         // Exactly two public declarations, both in the split's remit. Making a
         // migration, DTO or Content type public would widen the module's contract well
         // beyond what the runner needs.
-        let publicDeclarations = module.flatMap { source in
-            trimmedSourceLines(source.text).filter { $0.hasPrefix("public ") }
-        }
+        //
+        // GS-7: matched wherever `public` stands in the declaration, not only at line
+        // start, so `final public func` or an attribute in front of it cannot widen the
+        // surface without failing here.
+        let declarations = publicDeclarations(in: module)
 
-        #expect(publicDeclarations == [
+        #expect(declarations == [
             "public struct AIHOSAssetServer {",
             "public static func main() async throws {"
-        ], "Public surface widened: \(publicDeclarations)")
+        ], "Public surface widened: \(declarations)")
     }
 }

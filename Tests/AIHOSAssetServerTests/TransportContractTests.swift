@@ -61,7 +61,10 @@ struct TransportBaselineTests {
 
     @Test("The transport block is exactly 15 Content types plus SyncMetadata, never 17")
     func transportTypeCountIsSixteen() throws {
-        let source = try serverSourceText()
+        // Scanned across the whole library since F-C1 moved these declarations into
+        // APIContentDTOs.swift. The baseline itself is unchanged: extraction must not
+        // add, drop or reclassify a transport type.
+        let source = try serverModuleSourceTexts().map(\.text).joined(separator: "\n")
 
         let contentTypes = declaredStructNames(conformingTo: "Content", inSource: source)
         let codableTypes = declaredStructNames(conformingTo: "Codable", inSource: source)
@@ -76,7 +79,7 @@ struct TransportBaselineTests {
 
     @Test("Every expected Content type is present under its exact name")
     func contentTypeNamesAreStable() throws {
-        let source = try serverSourceText()
+        let source = try serverModuleSourceTexts().map(\.text).joined(separator: "\n")
         let contentTypes = Set(declaredStructNames(conformingTo: "Content", inSource: source))
 
         #expect(contentTypes == [
