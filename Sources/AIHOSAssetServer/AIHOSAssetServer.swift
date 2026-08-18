@@ -511,10 +511,18 @@ struct CreateGovernanceTriggers: AsyncMigration {
         // --- END ADDITIONAL OPERATIONAL STANDARDS GOVERNANCE TRIGGERS ---
 
         try await sql.raw("""
+        DROP TRIGGER IF EXISTS prevent_asset_records_update ON asset_records;
+        """).run()
+
+        try await sql.raw("""
         CREATE TRIGGER prevent_asset_records_update
         BEFORE UPDATE ON asset_records
         FOR EACH ROW
         EXECUTE FUNCTION prevent_asset_record_update();
+        """).run()
+
+        try await sql.raw("""
+        DROP TRIGGER IF EXISTS prevent_asset_records_delete ON asset_records;
         """).run()
 
         try await sql.raw("""
@@ -525,10 +533,18 @@ struct CreateGovernanceTriggers: AsyncMigration {
         """).run()
 
         try await sql.raw("""
+        DROP TRIGGER IF EXISTS prevent_asset_events_update ON asset_events;
+        """).run()
+
+        try await sql.raw("""
         CREATE TRIGGER prevent_asset_events_update
         BEFORE UPDATE ON asset_events
         FOR EACH ROW
         EXECUTE FUNCTION prevent_asset_event_update();
+        """).run()
+
+        try await sql.raw("""
+        DROP TRIGGER IF EXISTS prevent_asset_events_delete ON asset_events;
         """).run()
 
         try await sql.raw("""
@@ -561,10 +577,18 @@ struct CreateGovernanceTriggers: AsyncMigration {
         """).run()
 
         try await sql.raw("""
+        DROP TRIGGER IF EXISTS prevent_decision_traces_update ON decision_traces;
+        """).run()
+
+        try await sql.raw("""
         CREATE TRIGGER prevent_decision_traces_update
         BEFORE UPDATE ON decision_traces
         FOR EACH ROW
         EXECUTE FUNCTION prevent_decision_trace_update();
+        """).run()
+
+        try await sql.raw("""
+        DROP TRIGGER IF EXISTS prevent_decision_traces_delete ON decision_traces;
         """).run()
 
         try await sql.raw("""
