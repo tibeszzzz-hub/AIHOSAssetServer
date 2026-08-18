@@ -22,15 +22,17 @@ import Foundation
 @Suite("F-B production source layout")
 struct ProductionSourceLayoutTests {
 
-    @Test("The library target is exactly its three files, in the unchanged directory")
+    @Test("The library target is exactly its four files, in the unchanged directory")
     func libraryLayoutUnchanged() throws {
         let module = try serverModuleSourceTexts()
 
-        // F-C1 added APIContentDTOs.swift by extraction. The set is pinned rather than
-        // counted so a fourth file cannot appear unnoticed.
+        // F-C1 added APIContentDTOs.swift and F-C2 LaneValidationHelpers.swift, both by
+        // extraction. The set is pinned rather than counted so a further file cannot
+        // appear unnoticed.
         #expect(module.map(\.name) == [
             "AIHOSAssetServer.swift",
             "APIContentDTOs.swift",
+            "LaneValidationHelpers.swift",
             "MachineAuthGate.swift"
         ])
         #expect(serverModuleDirectoryURL.lastPathComponent == "AIHOSAssetServer")
@@ -49,6 +51,7 @@ struct ProductionSourceLayoutTests {
         #expect(try productionSourceTexts().map(\.name) == [
             "AIHOSAssetServer.swift",
             "APIContentDTOs.swift",
+            "LaneValidationHelpers.swift",
             "MachineAuthGate.swift",
             "main.swift"
         ])
