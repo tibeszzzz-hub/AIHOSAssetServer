@@ -116,6 +116,13 @@ func publicDeclarations(in sources: [(name: String, text: String)]) -> [String] 
     }
 }
 
+/// The whole library as one text, for inventories that must not care which file a
+/// declaration ended up in after an extraction. Registrations stay in the composition
+/// root and are still read from `serverSourceText()`.
+func serverModuleSourceText() throws -> String {
+    try serverModuleSourceTexts().map(\.text).joined(separator: "\n")
+}
+
 /// Every production Swift source across both targets, library first.
 func productionSourceTexts() throws -> [(name: String, text: String)] {
     try serverModuleSourceTexts() + runnerSourceTexts()

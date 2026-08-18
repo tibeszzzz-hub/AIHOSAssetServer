@@ -22,7 +22,7 @@ import Foundation
 @Suite("F-B production source layout")
 struct ProductionSourceLayoutTests {
 
-    @Test("The library target is exactly its five files, in the unchanged directory")
+    @Test("The library target is exactly its six files, in the unchanged directory")
     func libraryLayoutUnchanged() throws {
         let module = try serverModuleSourceTexts()
 
@@ -33,6 +33,7 @@ struct ProductionSourceLayoutTests {
             "APIContentDTOs.swift",
             "LaneValidationHelpers.swift",
             "MachineAuthGate.swift",
+            "SchemaMigrations.swift",
             "TimestampFormattingHelpers.swift"
         ])
         #expect(serverModuleDirectoryURL.lastPathComponent == "AIHOSAssetServer")
@@ -53,6 +54,7 @@ struct ProductionSourceLayoutTests {
             "APIContentDTOs.swift",
             "LaneValidationHelpers.swift",
             "MachineAuthGate.swift",
+            "SchemaMigrations.swift",
             "TimestampFormattingHelpers.swift",
             "main.swift"
         ])

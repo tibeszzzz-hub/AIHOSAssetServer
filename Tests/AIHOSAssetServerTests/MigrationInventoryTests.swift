@@ -63,7 +63,9 @@ struct MigrationInventoryTests {
 
     @Test("Exactly 12 AsyncMigration types are declared and they are the registered ones")
     func declaredTypesMatchRegistrations() throws {
-        let declared = declaredStructNames(conformingTo: "AsyncMigration", inSource: try serverSourceText())
+        // Scanned across the whole library: F-D1 moved nine of the twelve into
+        // SchemaMigrations.swift. The pinned names and their order are unchanged.
+        let declared = declaredStructNames(conformingTo: "AsyncMigration", inSource: try serverModuleSourceText())
 
         #expect(declared.count == 12, "Declared migration types: \(declared.count) — \(declared)")
         #expect(Set(declared) == Set(expectedMigrationRegistrationOrder))
@@ -71,9 +73,10 @@ struct MigrationInventoryTests {
 
     @Test("Declaration order deliberately differs from registration order")
     func declarationOrderDiffersFromRegistrationOrder() throws {
-        let source = try serverSourceText()
-        let declared = declaredStructNames(conformingTo: "AsyncMigration", inSource: source)
-        let registered = parseMigrationRegistrations(inSource: source)
+        // Declarations are spread across the library since F-D1; registrations live in
+        // the composition root and are read from there.
+        let declared = declaredStructNames(conformingTo: "AsyncMigration", inSource: try serverModuleSourceText())
+        let registered = parseMigrationRegistrations(inSource: try serverSourceText())
 
         // Pinned so nobody "fixes" the file layout and assumes the order followed it.
         #expect(declared != registered)

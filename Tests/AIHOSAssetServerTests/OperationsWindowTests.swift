@@ -463,7 +463,9 @@ struct A1bPreservationTests {
 
     @Test("No stored row is mutated or migrated by this atom")
     func historyUntouched() throws {
-        let lines = trimmedSourceLines(try serverSourceText())
+        // Whole library: the lane backfill moved to SchemaMigrations.swift in F-D1, and
+        // this check must keep seeing every mutation wherever it lives.
+        let lines = trimmedSourceLines(try serverModuleSourceText())
 
         // Every UPDATE/DELETE against asset_records in the whole server, pinned exactly.
         // Two belong to the pre-existing /test/immutable probe, which exists to prove
@@ -481,7 +483,7 @@ struct A1bPreservationTests {
 
         // Migration count and order are pinned by MigrationInventoryTests; assert here
         // that A1b introduced no new migration type.
-        #expect(declaredStructNames(conformingTo: "AsyncMigration", inSource: try serverSourceText()).count == 12)
+        #expect(declaredStructNames(conformingTo: "AsyncMigration", inSource: try serverModuleSourceText()).count == 12)
     }
 
     @Test("parsedTimestampDate keeps its epoch-first, ISO-tolerant behaviour")
