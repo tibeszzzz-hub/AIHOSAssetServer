@@ -43,21 +43,57 @@ func serverSourceText() throws -> String {
     try String(contentsOf: serverSourceURL, encoding: .utf8)
 }
 
-/// Directory holding every production Swift source.
-let productionSourcesDirectoryURL: URL = serverSourceURL.deletingLastPathComponent()
+// MARK: - What counts as production source
+//
+// Since F-B the server is split into two targets: the `AIHOSAssetServer` library, which
+// holds every line of behaviour, and the `AIHOSAssetServerRun` executable, which holds
+// nothing but the program entry point. Both are production code that ships in the
+// binary, so both are inside the safety net (GS-4).
+//
+// Splitting a codebase is the classic way for a file to slip out of a scan's reach, so
+// the directories are enumerated separately and each is asserted to contain exactly
+// what it should — a scan that quietly stopped seeing one of them would otherwise look
+// identical to a clean result.
 
-/// Every production Swift source, as `(file name, contents)`, sorted by name.
+/// Directory holding the server library: the two files that carry all behaviour.
+let serverModuleDirectoryURL: URL = serverSourceURL.deletingLastPathComponent()
+
+/// Directory holding the executable target: the entry point and nothing else.
+let runnerDirectoryURL: URL = serverModuleDirectoryURL
+    .deletingLastPathComponent()
+    .appendingPathComponent("AIHOSAssetServerRun")
+
+/// Swift files in a directory, as `(file name, contents)`, sorted by name.
 ///
-/// Used by absence checks, where scanning one file and calling it "the source" would
-/// be the easiest way to report a clean result for the wrong reason. Throws on an
-/// unreadable directory so an empty scan cannot pass as a clean scan.
-func productionSourceTexts() throws -> [(name: String, text: String)] {
+/// Throws on an unreadable directory so an empty scan cannot pass as a clean scan.
+func swiftSourceTexts(in directory: URL) throws -> [(name: String, text: String)] {
     let files = try FileManager.default
-        .contentsOfDirectory(at: productionSourcesDirectoryURL, includingPropertiesForKeys: nil)
+        .contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
         .filter { $0.pathExtension == "swift" }
         .sorted { $0.lastPathComponent < $1.lastPathComponent }
 
     return try files.map { ($0.lastPathComponent, try String(contentsOf: $0, encoding: .utf8)) }
+}
+
+/// The server library's sources.
+func serverModuleSourceTexts() throws -> [(name: String, text: String)] {
+    try swiftSourceTexts(in: serverModuleDirectoryURL)
+}
+
+/// The executable target's sources.
+func runnerSourceTexts() throws -> [(name: String, text: String)] {
+    try swiftSourceTexts(in: runnerDirectoryURL)
+}
+
+/// Every production Swift source across both targets, library first.
+func productionSourceTexts() throws -> [(name: String, text: String)] {
+    try serverModuleSourceTexts() + runnerSourceTexts()
+}
+
+/// Lines that are neither blank nor a `//` comment. Used to hold the runner to being
+/// an entry point rather than a place where logic quietly accumulates.
+func executableLines(in source: String) -> [String] {
+    trimmedSourceLines(source).filter { !$0.isEmpty && !$0.hasPrefix("//") }
 }
 
 /// Number of lines matching `pattern` (a regular expression) across the given sources.

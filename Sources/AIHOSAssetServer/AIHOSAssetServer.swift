@@ -1497,9 +1497,20 @@ actor AppleVisionOCRVerifier {
 }
 #endif
 
-@main
-struct AIHOSAssetServer {
-    static func main() async throws {
+/// The server itself: configuration, migrations, routes and startup.
+///
+/// This type carries no program entry point. The entry point lives in the separate
+/// `AIHOSAssetServerRun` target, as top-level code in its `main.swift`, so that this
+/// module can be built as a library and imported by the test bundle — an entry point
+/// in the tested module is what previously stopped the suite from running in release
+/// configuration.
+///
+/// `public` reaches exactly as far as the runner needs and no further: the type and
+/// its start access only. Migrations, DTOs, `Content` types and every other symbol
+/// stay internal, so the module's surface has not widened.
+public struct AIHOSAssetServer {
+    /// Starts the server. Called by the runner target's entry point.
+    public static func main() async throws {
         let app = try await Application.make(.detect())
         defer {
             Task {

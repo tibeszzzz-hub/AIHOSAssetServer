@@ -166,9 +166,10 @@ struct RemoteAccessAbsenceTests {
         let sources = try productionSourceTexts()
 
         // Without this control a zero result below could just as well mean the scan
-        // looked at the wrong directory, or at nothing at all.
-        #expect(sources.count == 2, "Production sources found: \(sources.map(\.name))")
-        #expect(sources.map(\.name) == ["AIHOSAssetServer.swift", "MachineAuthGate.swift"])
+        // looked at the wrong directory, or at nothing at all. Since F-B that means
+        // both production targets: the library and the runner.
+        #expect(sources.count == 3, "Production sources found: \(sources.map(\.name))")
+        #expect(sources.map(\.name) == ["AIHOSAssetServer.swift", "MachineAuthGate.swift", "main.swift"])
 
         // A term that genuinely exists, matched with the same machinery as the
         // forbidden ones, proving the matcher works and is pointed at real content.
