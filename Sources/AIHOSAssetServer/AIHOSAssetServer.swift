@@ -817,11 +817,12 @@ func hourFromExpectedWindow(_ expectedWindow: String) -> Int? {
 // correct, current data — they are neither legacy nor invalid, and nothing here
 // describes them as such.
 //
-// The gap and pulse calculations further down still read timestamps through an ISO
-// 8601 prefix predicate, so today they match none of the stored rows. Making those
-// calculations epoch-correct is a separate, already-scoped product change and is not
-// done here. This diagnostic exists only to keep that mismatch visible while that
-// work is pending, at a fixed and bounded cost.
+// The gap and pulse calculations read those rows directly as epoch since A1b, so the
+// mismatch this diagnostic was created for is gone. It is kept, repointed at the
+// ingest contract: it now reports rows that are NOT canonical and that the window
+// comparison therefore cannot count. With the ingest guard in place no new such row
+// can be created, so in a healthy server the count is zero and nothing is logged at
+// all — a line here means something wrote outside the contract and needs attention.
 //
 // Bounded on purpose: one aggregated row, at most one log line per request, at most
 // `timestampDiagnosticExampleLimit` example record IDs, and no timestamp, payload,
@@ -846,9 +847,8 @@ struct TimestampReadExpectationDiagnostic {
 
 /// Read-only aggregate: one row, one exact count, at most five example IDs.
 ///
-/// The predicate is the same one the calculations use, applied here purely as
-/// diagnostics — it identifies rows the current ISO read expectation cannot see, not
-/// rows that are wrong.
+/// The predicate is the ingest contract, negated: it identifies rows the window
+/// comparison cannot count because they are not canonical fixed-width epoch values.
 func timestampReadExpectationDiagnosticQuery() -> SQLQueryString {
     """
         SELECT
@@ -858,13 +858,13 @@ func timestampReadExpectationDiagnosticQuery() -> SQLQueryString {
                 FROM (
                     SELECT id
                     FROM asset_records
-                    WHERE "captureTimestamp" !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:'
+                    WHERE "captureTimestamp" !~ '^[0-9]{10}$'
                     ORDER BY id
                     LIMIT \(bind: timestampDiagnosticExampleLimit)
                 ) AS sample
             ), '') AS "exampleRecordIDs"
         FROM asset_records
-        WHERE "captureTimestamp" !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:'
+        WHERE "captureTimestamp" !~ '^[0-9]{10}$'
     """
 }
 
@@ -888,9 +888,9 @@ func timestampReadExpectationDiagnostic(
 
 /// Emits at most one structured line, and none at all when nothing matched.
 ///
-/// Cost is O(1) in the number of matching rows — that is the entire point of this
-/// atom. The message states the mismatch neutrally in both directions: the rows are
-/// canonical, the read expectation is the part that is out of step.
+/// Cost is O(1) in the number of matching rows. The message names what is actually
+/// wrong without overstating it: these rows fall outside the ingest contract, which
+/// is why the window comparison cannot see them.
 func logTimestampReadExpectationDiagnostic(
     _ diagnostic: TimestampReadExpectationDiagnostic?,
     calculation: String,
@@ -899,7 +899,7 @@ func logTimestampReadExpectationDiagnostic(
     guard let diagnostic, diagnostic.totalCount > 0 else { return }
 
     logger.warning(
-        "captureTimestamp read-expectation mismatch: rows are stored in the canonical epoch format while this calculation reads an ISO 8601 prefix",
+        "captureTimestamp read-expectation mismatch: rows do not match the canonical 10-digit epoch contract and cannot be counted by this calculation",
         metadata: [
             "calculation": .string(calculation),
             "totalCount": .string(String(diagnostic.totalCount)),
@@ -954,6 +954,253 @@ func humanReadableTimestamp(_ timestamp: String) -> String {
     formatter.dateFormat = "yyyy-MM-dd HH:mm"
     return formatter.string(from: date)
 }
+
+// MARK: - Canonical capture timestamp contract
+//
+// `asset_records."captureTimestamp"` is a 10-digit Unix epoch in seconds, UTC
+// (WFOS-20260817-NBPS-001). That is the single accepted ingest form: no ISO 8601, no
+// 13-digit milliseconds, no silent normalisation. A non-canonical upload is refused
+// before anything is written, so a rejected request never leaves a file on disk or a
+// row in the database.
+//
+// The fixed width is load-bearing. Because every accepted value is exactly ten
+// digits, lexicographic ordering of the stored text equals numeric ordering, which is
+// what lets the window comparison below be a plain string range instead of a cast.
+
+/// The only capture timestamp shape this server accepts.
+let canonicalCaptureTimestampPattern = "^[0-9]{10}$"
+
+/// True when `value` is a 10-digit Unix epoch in seconds.
+///
+/// Deliberately strict: a 13-digit millisecond value is refused rather than divided,
+/// because guessing a client's unit is how silent data corruption starts.
+func isCanonicalCaptureTimestamp(_ value: String) -> Bool {
+    value.range(of: canonicalCaptureTimestampPattern, options: .regularExpression) != nil
+}
+
+// MARK: - Operations time zone
+//
+// Hotel days are local days. A "22:00–23:00" standard means 22:00 local time, so
+// every window boundary has to be resolved in the operation's own zone before it can
+// be compared with a UTC epoch.
+//
+// INTERIM CONFIGURATION: the zone is supplied per deployment through
+// `OPERATIONS_TIMEZONE`. The current value and the decision behind it live in the
+// deployment configuration and in Tibi's decision of 2026-08-18 (see the A1b build
+// order) — deliberately not here, because a zone name written into the source would
+// go stale the day the operation moves and would then contradict the configuration.
+// Moving zones must therefore be a configuration change only. When an Organization
+// model exists and owns the zone, this reads from there instead; the resolution and
+// fail-closed behaviour below stay the same.
+
+/// Name of the environment variable holding the IANA operations time zone.
+let operationsTimeZoneEnvironmentKey = "OPERATIONS_TIMEZONE"
+
+/// Why the operations time zone could not be resolved.
+///
+/// Both cases refuse startup. There is no default and no fallback: a server that
+/// guessed a zone would compute every hotel day boundary wrong while looking healthy.
+enum OperationsTimeZoneError: Error, CustomStringConvertible {
+    case notConfigured
+    case notAnIANATimeZone(String)
+
+    var description: String {
+        switch self {
+        case .notConfigured:
+            return "\(operationsTimeZoneEnvironmentKey) is required and must be set to an IANA time zone identifier"
+        case .notAnIANATimeZone(let value):
+            return "\(operationsTimeZoneEnvironmentKey) is not a known IANA time zone identifier: \(value)"
+        }
+    }
+}
+
+/// Resolves the operations time zone from a raw configuration value.
+///
+/// Kept separate from the environment lookup so the fail-closed rule can be tested
+/// without mutating process environment state — same shape as `MachineCredential`.
+///
+/// Membership in `knownTimeZoneIdentifiers` is checked explicitly: `TimeZone(identifier:)`
+/// alone also accepts offset forms such as "GMT+0200", which carry no DST rules and
+/// would silently produce wrong boundaries twice a year.
+func resolvedOperationsTimeZone(fromConfiguredValue value: String?) throws -> TimeZone {
+    guard let value else {
+        throw OperationsTimeZoneError.notConfigured
+    }
+
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    guard !trimmed.isEmpty else {
+        throw OperationsTimeZoneError.notConfigured
+    }
+
+    guard TimeZone.knownTimeZoneIdentifiers.contains(trimmed),
+          let timeZone = TimeZone(identifier: trimmed) else {
+        throw OperationsTimeZoneError.notAnIANATimeZone(trimmed)
+    }
+
+    return timeZone
+}
+
+/// Resolves the operations time zone from the process environment. Refuses startup on
+/// a missing or unknown value.
+func resolvedOperationsTimeZone() throws -> TimeZone {
+    try resolvedOperationsTimeZone(fromConfiguredValue: Environment.get(operationsTimeZoneEnvironmentKey))
+}
+
+/// Gregorian calendar pinned to the operations zone.
+func operationsCalendar(timeZone: TimeZone) -> Calendar {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = timeZone
+    return calendar
+}
+
+/// The local operations date of `date`, as `YYYY-MM-DD`.
+///
+/// This is the day a hotel is working in, which is not the UTC day — at 00:30 local
+/// in Vienna the UTC date is still yesterday.
+func operationsDateString(for date: Date, in timeZone: TimeZone) -> String {
+    let calendar = operationsCalendar(timeZone: timeZone)
+    let components = calendar.dateComponents([.year, .month, .day], from: date)
+
+    guard let year = components.year,
+          let month = components.month,
+          let day = components.day else {
+        return String(ISO8601DateFormatter().string(from: date).prefix(10))
+    }
+
+    return String(format: "%04d-%02d-%02d", year, month, day)
+}
+
+// MARK: - Observation window
+
+/// Half-open epoch bounds of one standard's window on one local operations date.
+///
+/// Both values are exactly ten digits so they can be compared directly against the
+/// stored text. `endEpoch` is exclusive.
+struct ObservationWindowBounds: Equatable {
+    let startEpoch: String
+    let endEpoch: String
+}
+
+/// Formats an epoch second as the canonical fixed-width text form.
+///
+/// Returns `nil` outside the representable range, so a value that would break the
+/// fixed width — and therefore break lexicographic ordering — can never be emitted.
+func canonicalEpochString(_ epochSeconds: Int) -> String? {
+    guard epochSeconds >= 0, epochSeconds <= 9_999_999_999 else { return nil }
+    return String(format: "%010d", epochSeconds)
+}
+
+/// Resolves `localDate` plus `startHour..<endHour` into canonical epoch bounds.
+///
+/// The single window helper both the gap and the pulse calculation use. Boundaries
+/// are built from date components rather than by adding hours to midnight, so a day
+/// that is 23 or 25 hours long resolves to the correct wall-clock instants.
+///
+/// Returns `nil` for an unusable request — malformed date, inverted or out-of-range
+/// hours, or an epoch outside the fixed width — so the caller fails closed instead of
+/// counting against a half-built window.
+func observationWindowBounds(
+    localDate: String,
+    startHour: Int,
+    endHour: Int,
+    timeZone: TimeZone
+) -> ObservationWindowBounds? {
+    guard isValidISO8601DateString(localDate) else { return nil }
+    guard startHour >= 0, endHour > startHour, endHour <= 24 else { return nil }
+
+    let parts = localDate.split(separator: "-")
+    guard parts.count == 3,
+          let year = Int(parts[0]),
+          let month = Int(parts[1]),
+          let day = Int(parts[2]) else { return nil }
+
+    let calendar = operationsCalendar(timeZone: timeZone)
+
+    var startComponents = DateComponents()
+    startComponents.year = year
+    startComponents.month = month
+    startComponents.day = day
+    startComponents.hour = startHour
+
+    guard let startDate = calendar.date(from: startComponents) else { return nil }
+
+    let endDate: Date?
+    if endHour == 24 {
+        // A window closing at midnight belongs to the next local day's 00:00.
+        var midnightComponents = DateComponents()
+        midnightComponents.year = year
+        midnightComponents.month = month
+        midnightComponents.day = day
+        midnightComponents.hour = 0
+
+        endDate = calendar.date(from: midnightComponents).flatMap {
+            calendar.date(byAdding: .day, value: 1, to: $0)
+        }
+    } else {
+        var endComponents = DateComponents()
+        endComponents.year = year
+        endComponents.month = month
+        endComponents.day = day
+        endComponents.hour = endHour
+
+        endDate = calendar.date(from: endComponents)
+    }
+
+    guard let endDate,
+          let startEpoch = canonicalEpochString(Int(startDate.timeIntervalSince1970)),
+          let endEpoch = canonicalEpochString(Int(endDate.timeIntervalSince1970)),
+          startEpoch < endEpoch else { return nil }
+
+    return ObservationWindowBounds(startEpoch: startEpoch, endEpoch: endEpoch)
+}
+
+/// Counts observations inside one window. The only window SQL in the server.
+///
+/// The comparison is a plain half-open text range. That is exact rather than
+/// convenient: every stored value is fixed-width, so lexicographic order is numeric
+/// order. The shape guard is defence in depth — should a non-canonical row ever exist
+/// despite the ingest contract, it is excluded rather than mis-ranked.
+func observationCountInWindowQuery(bounds: ObservationWindowBounds) -> SQLQueryString {
+    """
+        SELECT COUNT(*) AS "recordCount"
+        FROM asset_records
+        WHERE "captureTimestamp" ~ '^[0-9]{10}$'
+          AND "captureTimestamp" >= \(bind: bounds.startEpoch)
+          AND "captureTimestamp" < \(bind: bounds.endEpoch)
+    """
+}
+
+/// Counts human `leave_empty` decisions for one standard, on one local date, for one
+/// window. The only decision-trace window SQL in the server.
+///
+/// `expected_window_start` and `expected_window_end` stay ISO 8601: they record what a
+/// person decided about a named window, not when an observation was captured, and are
+/// deliberately not converted to epoch here.
+///
+/// The date filter is the correction: without it a `leave_empty` decision made on any
+/// earlier day suppressed today's gap for the same standard, forever.
+func leaveEmptyDecisionCountQuery(
+    standardKey: String,
+    localDate: String,
+    startHour: Int,
+    endHour: Int
+) -> SQLQueryString {
+    """
+        SELECT COUNT(*) AS "decisionCount"
+        FROM decision_traces
+        WHERE "standard_key" = \(bind: standardKey)
+          AND "expected_window_start" ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:'
+          AND "expected_window_end" ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:'
+          AND SUBSTRING("expected_window_start" FROM 1 FOR 10) = \(bind: localDate)
+          AND SUBSTRING("expected_window_end" FROM 1 FOR 10) = \(bind: localDate)
+          AND CAST(SUBSTRING("expected_window_start" FROM 12 FOR 2) AS INTEGER) = \(bind: startHour)
+          AND CAST(SUBSTRING("expected_window_end" FROM 12 FOR 2) AS INTEGER) = \(bind: endHour)
+          AND "decision_type" = 'leave_empty'
+          AND "source_tag" = '[M]'
+    """
+}
+
 func resolvedStorageDirectory() throws -> String {
     guard let rawStoragePath = Environment.get("STORAGE_PATH")?.trimmingCharacters(in: .whitespacesAndNewlines),
           !rawStoragePath.isEmpty else {
@@ -1237,6 +1484,13 @@ struct AIHOSAssetServer {
         let storageDirectory = try resolvedStorageDirectory()
         print("workingDirectory: \(app.directory.workingDirectory)")
 
+        // Fail-closed: a missing or non-IANA OPERATIONS_TIMEZONE refuses startup rather
+        // than defaulting, because a guessed zone would compute every hotel day
+        // boundary wrong while the server looked healthy. Interim value is supplied per
+        // deployment; no zone name is hardcoded anywhere in this source.
+        let operationsTimeZone = try resolvedOperationsTimeZone()
+        print("Operations time zone configured: \(operationsTimeZone.identifier)")
+
         // Central machine-to-machine auth gate. Every production-affecting route below is
         // registered on `apiV1` or `gated`, never on `app` — see MachineAuthGate.swift.
         // The only route allowed on `app` is the liveness probe, which is classified in
@@ -1429,6 +1683,15 @@ struct AIHOSAssetServer {
                 return .badRequest
             }
 
+            // Canonical ingest contract, enforced before anything is written: no file on
+            // disk, no row, no partial state. A 13-digit millisecond value is refused
+            // rather than normalised — guessing the client's unit is how silent data
+            // corruption starts.
+            guard isCanonicalCaptureTimestamp(metadata.captureTimestamp) else {
+                print("Capture timestamp rejected: not a 10-digit Unix epoch in seconds")
+                return .badRequest
+            }
+
             // Validate laneKey before any DB write
             print("Received laneKey: \(metadata.laneKey ?? "nil")")
             guard let laneKey = validatedLaneKey(metadata.laneKey) else {
@@ -1577,6 +1840,13 @@ struct AIHOSAssetServer {
                 metadata = try JSONDecoder().decode(SyncMetadata.self, from: metadataData)
             } catch {
                 print("Audio metadata decode failed: \(error)")
+                return .badRequest
+            }
+
+            // Same canonical ingest contract as /sync, enforced before the audio file is
+            // written so a rejected upload leaves nothing behind.
+            guard isCanonicalCaptureTimestamp(metadata.captureTimestamp) else {
+                print("Audio capture timestamp rejected: not a 10-digit Unix epoch in seconds")
                 return .badRequest
             }
 
@@ -2715,7 +2985,10 @@ struct AIHOSAssetServer {
             guard let sql = req.db as? SQLDatabase else {
                 return Response(status: .internalServerError)
             }
-            let requestedDate = req.query[String.self, at: "date"] ?? iso8601DateStringForToday()
+            // The default is today in the operations zone, not in UTC: a hotel working
+            // at 00:30 local is still asking about its own day.
+            let requestedDate = req.query[String.self, at: "date"]
+                ?? operationsDateString(for: Date(), in: operationsTimeZone)
 
             guard isValidISO8601DateString(requestedDate) else {
                 let response = Response(status: .badRequest)
@@ -2769,29 +3042,38 @@ struct AIHOSAssetServer {
                     continue
                 }
 
-                let countRows = try await sql.raw("""
-                    SELECT COUNT(*) AS "recordCount"
-                    FROM asset_records
-                    WHERE "captureTimestamp" ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:'
-                      AND SUBSTRING("captureTimestamp" FROM 1 FOR 10) = \(bind: requestedDate)
-                      AND CAST(SUBSTRING("captureTimestamp" FROM 12 FOR 2) AS INTEGER) >= \(bind: startHour)
-                      AND CAST(SUBSTRING("captureTimestamp" FROM 12 FOR 2) AS INTEGER) < \(bind: endHour)
-                """).all()
+                // Fail closed: a standard whose window cannot be resolved is skipped and
+                // reported rather than evaluated against a half-built range.
+                guard let windowBounds = observationWindowBounds(
+                    localDate: requestedDate,
+                    startHour: startHour,
+                    endHour: endHour,
+                    timeZone: operationsTimeZone
+                ) else {
+                    req.logger.warning(
+                        "Unresolvable observation window, standard skipped",
+                        metadata: [
+                            "calculation": .string("gaps/mechanical"),
+                            "standardKey": .string(standardKey),
+                            "localDate": .string(requestedDate)
+                        ]
+                    )
+                    continue
+                }
+
+                let countRows = try await sql.raw(observationCountInWindowQuery(bounds: windowBounds)).all()
 
                 let observedCount = try countRows[0].decode(column: "recordCount", as: Int.self)
 
                 if observedCount < requiredCount {
-                    let decisionRows = try await sql.raw("""
-                        SELECT COUNT(*) AS "decisionCount"
-                        FROM decision_traces
-                        WHERE "standard_key" = \(bind: standardKey)
-                          AND "expected_window_start" ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:'
-                          AND "expected_window_end" ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:'
-                          AND CAST(SUBSTRING("expected_window_start" FROM 12 FOR 2) AS INTEGER) = \(bind: startHour)
-                          AND CAST(SUBSTRING("expected_window_end" FROM 12 FOR 2) AS INTEGER) = \(bind: endHour)
-                          AND "decision_type" = 'leave_empty'
-                          AND "source_tag" = '[M]'
-                    """).all()
+                    let decisionRows = try await sql.raw(
+                        leaveEmptyDecisionCountQuery(
+                            standardKey: standardKey,
+                            localDate: requestedDate,
+                            startHour: startHour,
+                            endHour: endHour
+                        )
+                    ).all()
 
                     let decisionCount = try decisionRows[0].decode(column: "decisionCount", as: Int.self)
 
@@ -2837,6 +3119,10 @@ struct AIHOSAssetServer {
                 ORDER BY "standardKey" ASC
             """).all()
 
+            // Pulse reports the current operations day. Before A1b it compared only the
+            // hour of day and therefore counted observations from any date (SF-A).
+            let pulseDate = operationsDateString(for: Date(), in: operationsTimeZone)
+
             var activeStandardsCount = 0
             var informationGapsCount = 0
 
@@ -2854,7 +3140,7 @@ struct AIHOSAssetServer {
                 let endHour = try standard.decode(column: "endHour", as: Int.self)
                 let requiredCount = try standard.decode(column: "requiredCount", as: Int.self)
                 let createdAt = try standard.decode(column: "created_at", as: String.self)
-                let evaluationTimestamp = iso8601Timestamp(dateString: iso8601DateStringForToday(), hour: endHour)
+                let evaluationTimestamp = iso8601Timestamp(dateString: pulseDate, hour: endHour)
                 let standardWasActive = try await isStandardActive(
                     standardID: standardID,
                     at: evaluationTimestamp,
@@ -2869,28 +3155,37 @@ struct AIHOSAssetServer {
 
                 activeStandardsCount += 1
 
-                let countRows = try await sql.raw("""
-                    SELECT COUNT(*) AS "recordCount"
-                    FROM asset_records
-                    WHERE "captureTimestamp" ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:'
-                      AND CAST(SUBSTRING("captureTimestamp" FROM 12 FOR 2) AS INTEGER) >= \(bind: startHour)
-                      AND CAST(SUBSTRING("captureTimestamp" FROM 12 FOR 2) AS INTEGER) < \(bind: endHour)
-                """).all()
+                // Same fail-closed rule and the same single window helper as gaps.
+                guard let windowBounds = observationWindowBounds(
+                    localDate: pulseDate,
+                    startHour: startHour,
+                    endHour: endHour,
+                    timeZone: operationsTimeZone
+                ) else {
+                    req.logger.warning(
+                        "Unresolvable observation window, standard skipped",
+                        metadata: [
+                            "calculation": .string("state/pulse"),
+                            "standardKey": .string(standardKey),
+                            "localDate": .string(pulseDate)
+                        ]
+                    )
+                    continue
+                }
+
+                let countRows = try await sql.raw(observationCountInWindowQuery(bounds: windowBounds)).all()
 
                 let observedCount = try countRows[0].decode(column: "recordCount", as: Int.self)
 
                 if observedCount < requiredCount {
-                    let decisionRows = try await sql.raw("""
-                        SELECT COUNT(*) AS "decisionCount"
-                        FROM decision_traces
-                        WHERE "standard_key" = \(bind: standardKey)
-                          AND "expected_window_start" ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:'
-                          AND "expected_window_end" ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:'
-                          AND CAST(SUBSTRING("expected_window_start" FROM 12 FOR 2) AS INTEGER) = \(bind: startHour)
-                          AND CAST(SUBSTRING("expected_window_end" FROM 12 FOR 2) AS INTEGER) = \(bind: endHour)
-                          AND "decision_type" = 'leave_empty'
-                          AND "source_tag" = '[M]'
-                    """).all()
+                    let decisionRows = try await sql.raw(
+                        leaveEmptyDecisionCountQuery(
+                            standardKey: standardKey,
+                            localDate: pulseDate,
+                            startHour: startHour,
+                            endHour: endHour
+                        )
+                    ).all()
 
                     let decisionCount = try decisionRows[0].decode(column: "decisionCount", as: Int.self)
 
