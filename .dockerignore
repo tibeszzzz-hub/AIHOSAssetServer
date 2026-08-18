@@ -1,0 +1,43 @@
+# Build context hygiene for the production image.
+#
+# Railway builds from a git checkout, so it never sees untracked files; a local
+# `docker build .` does. Without this file the context is ~4 GB instead of ~350 kB,
+# because the local `.build/` directory alone is 4 GB. A build context that large is
+# slow to send and, worse, `COPY . .` would drop a stale host-built `.build/` on top
+# of the image and let the release build reuse artefacts that were never produced by
+# this image's toolchain.
+
+# Local build products. Never belong in the image: the release build inside the
+# builder stage produces its own.
+.build/
+
+# Version control metadata. Not needed to compile.
+.git/
+.gitignore
+
+# Untracked working material that is not part of the server build.
+docs/
+PayloadStorage/
+.DS_Store
+
+# Tracked test media. Neither the server sources nor the test sources reference
+# these two files; they are repository artefacts, verified unreferenced before
+# being excluded here.
+real-image.icns
+real-render-test.jpg
+
+# The build recipe itself does not need to be inside the image.
+Dockerfile
+.dockerignore
+
+# NOTE ON Tests/ — deliberately NOT excluded.
+#
+# Excluding Tests/ breaks the build. Package.swift declares the test target with an
+# implicit path; when Tests/ is absent SwiftPM falls back to inferring that target's
+# sources from the package root, which then overlaps the library and runner targets:
+#
+#   error: target 'AIHOSAssetServerTests' has overlapping sources: ...
+#
+# Verified empirically against this commit. Keeping Tests/ in the *build context* is
+# therefore required. It costs 164 kB and it does not reach the runtime image, because
+# the runtime stage copies the built binary alone and never the source tree.
