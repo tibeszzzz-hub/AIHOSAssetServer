@@ -43,6 +43,32 @@ func serverSourceText() throws -> String {
     try String(contentsOf: serverSourceURL, encoding: .utf8)
 }
 
+/// Directory holding every production Swift source.
+let productionSourcesDirectoryURL: URL = serverSourceURL.deletingLastPathComponent()
+
+/// Every production Swift source, as `(file name, contents)`, sorted by name.
+///
+/// Used by absence checks, where scanning one file and calling it "the source" would
+/// be the easiest way to report a clean result for the wrong reason. Throws on an
+/// unreadable directory so an empty scan cannot pass as a clean scan.
+func productionSourceTexts() throws -> [(name: String, text: String)] {
+    let files = try FileManager.default
+        .contentsOfDirectory(at: productionSourcesDirectoryURL, includingPropertiesForKeys: nil)
+        .filter { $0.pathExtension == "swift" }
+        .sorted { $0.lastPathComponent < $1.lastPathComponent }
+
+    return try files.map { ($0.lastPathComponent, try String(contentsOf: $0, encoding: .utf8)) }
+}
+
+/// Number of lines matching `pattern` (a regular expression) across the given sources.
+func matchCount(ofPattern pattern: String, options: String.CompareOptions, in sources: [(name: String, text: String)]) -> Int {
+    sources.reduce(0) { total, source in
+        total + trimmedSourceLines(source.text).filter {
+            $0.range(of: pattern, options: options) != nil
+        }.count
+    }
+}
+
 /// Splits source into trimmed lines. Registrations in this codebase are single-line,
 /// which every parser below relies on; `assertRegistrationsAreSingleLine` guards it.
 func trimmedSourceLines(_ source: String) -> [String] {
