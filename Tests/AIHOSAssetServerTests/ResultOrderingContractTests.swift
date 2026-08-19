@@ -23,10 +23,22 @@ import Foundation
 // routes issue an ASCENDING SQL sort and then re-sort DESCENDING in Swift. Anyone
 // tidying up "redundant" sorting would reverse two client-visible lists.
 
-/// Every `ORDER BY` clause in the server source, in source order, normalised to single
-/// spaces. Ten clauses across nine call sites plus the shared legacy-skip helper.
+/// Every `ORDER BY` clause in the production library, in source order, normalised to
+/// single spaces. Ten clauses in total.
+///
+/// F-E3 moved the diagnostic into its own file, so the ten are now pinned per file
+/// instead of as one flat list. That is deliberately stricter, not looser: a flat
+/// list read across the whole library would have made the expected order depend on
+/// how the files happen to sort, which is not a contract about anything. Each file's
+/// clauses are still pinned exactly, in order, and the total is still exactly ten.
+
+/// The single clause in `TimestampDiagnostics.swift`.
+private let expectedDiagnosticOrderByClauses: [String] = [
+    "ORDER BY id"                                           // timestampReadExpectationDiagnosticQuery (A1a)
+]
+
+/// The nine clauses remaining in `AIHOSAssetServer.swift`, in source order.
 private let expectedOrderByClauses: [String] = [
-    "ORDER BY id",                                          // timestampReadExpectationDiagnosticQuery (A1a)
     "ORDER BY changed_at DESC",                             // isStandardActive — latest status wins
     #"ORDER BY asset_records."captureTimestamp" ASC"#,      // GET /api/v1/records
     "ORDER BY created_at ASC",                              // GET /api/v1/standards
@@ -45,13 +57,29 @@ struct ResultOrderingContractTests {
     func orderByClausesAreExact() throws {
         let clauses = parseOrderByClauses(inSource: try serverSourceText())
 
-        #expect(clauses.count == 10, "Found \(clauses.count) ORDER BY clauses: \(clauses)")
+        #expect(clauses.count == 9, "Found \(clauses.count) ORDER BY clauses: \(clauses)")
         #expect(clauses == expectedOrderByClauses)
+
+        let diagnosticSource = try #require(
+            try serverModuleSourceTexts().first { $0.name == "TimestampDiagnostics.swift" }?.text,
+            "TimestampDiagnostics.swift is missing from the library"
+        )
+        #expect(parseOrderByClauses(inSource: diagnosticSource) == expectedDiagnosticOrderByClauses)
+    }
+
+    @Test("The library as a whole still has exactly ten ordering clauses")
+    func libraryOrderByTotalIsUnchanged() throws {
+        // Catches a clause moved into any other file rather than lost: the per-file
+        // assertions above would both still pass if one reappeared somewhere new.
+        let clauses = parseOrderByClauses(inSource: try serverModuleSourceText())
+
+        #expect(clauses.count == 10, "Found \(clauses.count) ORDER BY clauses in the library: \(clauses)")
+        #expect(clauses.sorted() == (expectedOrderByClauses + expectedDiagnosticOrderByClauses).sorted())
     }
 
     @Test("Exactly one ordering clause is descending, and it is the status lookup")
     func onlyStatusLookupIsDescending() throws {
-        let clauses = parseOrderByClauses(inSource: try serverSourceText())
+        let clauses = parseOrderByClauses(inSource: try serverModuleSourceText())
         let descending = clauses.filter { $0.uppercased().hasSuffix("DESC") }
 
         // `isStandardActive` takes the most recent status at or before the evaluation

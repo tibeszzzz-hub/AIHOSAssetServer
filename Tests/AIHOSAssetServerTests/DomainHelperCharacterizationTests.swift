@@ -241,7 +241,9 @@ struct TimestampDiagnosticQueryTests {
     /// weakened — the boundedness checks below are strictly stronger than what the
     /// previous shape could be held to.
     private func queryBody() throws -> [String] {
-        let source = try serverSourceText()
+        // Whole library since F-E3 moved the diagnostic into TimestampDiagnostics.swift.
+        // The positive control below still fails loudly if it is renamed or deleted.
+        let source = try serverModuleSourceText()
 
         let body = declarationBody(
             startingWithLinePrefix: "func timestampReadExpectationDiagnosticQuery(",
@@ -250,7 +252,7 @@ struct TimestampDiagnosticQueryTests {
 
         // Positive control: a moved or renamed declaration must fail loudly rather than
         // hand back an empty body that satisfies every "does not contain" assertion.
-        #expect(body != nil, "timestampReadExpectationDiagnosticQuery declaration not found in the server source")
+        #expect(body != nil, "timestampReadExpectationDiagnosticQuery declaration not found in the production library")
         #expect((body ?? []).isEmpty == false)
 
         return body ?? []
@@ -293,7 +295,7 @@ struct TimestampDiagnosticQueryTests {
 
     @Test("The declaration is read-only and takes no caller-supplied context")
     func queryIsReadOnlyAndParameterless() throws {
-        let source = try serverSourceText()
+        let source = try serverModuleSourceText()
         let sql = try queryBody().joined(separator: "\n").uppercased()
 
         for mutatingKeyword in ["INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "TRUNCATE"] {
@@ -303,7 +305,7 @@ struct TimestampDiagnosticQueryTests {
         // SF-C is resolved by construction: the dead `context` parameter is gone rather
         // than carried forward, and the calling site supplies its own neutral label.
         #expect(source.contains("legacyTimestampSkipLogQuery") == false,
-                "The former helper name is still present in the server source")
+                "The former helper name is still present in the production library")
         #expect(source.contains("func timestampReadExpectationDiagnosticQuery() -> SQLQueryString"))
     }
 }

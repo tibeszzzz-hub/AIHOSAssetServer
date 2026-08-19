@@ -513,7 +513,7 @@ struct A1bPreservationTests {
     func diagnosticRepointedNotRemoved() throws {
         let body = try #require(declarationBody(
             startingWithLinePrefix: "func timestampReadExpectationDiagnosticQuery(",
-            inSource: try serverSourceText()
+            inSource: try serverModuleSourceText()
         ))
         let sql = body.joined(separator: "\n")
 
