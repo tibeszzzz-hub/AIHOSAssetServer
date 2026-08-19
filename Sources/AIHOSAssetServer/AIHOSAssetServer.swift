@@ -1117,57 +1117,7 @@ public struct AIHOSAssetServer {
             return response
         }
 
-        apiV1.get("standards", ":standardID", "status-updates") { req async throws -> Response in
-            guard let sql = req.db as? SQLDatabase else {
-                return Response(status: .internalServerError)
-            }
-
-            guard let standardIDString = req.parameters.get("standardID"),
-                  let standardID = UUID(uuidString: standardIDString) else {
-                print("Standard Status Timeline retrieval failed: invalid standardID")
-                let response = Response(status: .badRequest)
-                try response.content.encode([
-                    "reason": "invalid operational standard id"
-                ])
-                return response
-            }
-
-            let rows = try await sql.raw("""
-                SELECT
-                    id,
-                    standard_id,
-                    status,
-                    source_tag,
-                    changed_at
-                FROM standard_status_updates
-                WHERE standard_id = \(bind: standardID)
-                ORDER BY changed_at ASC
-            """).all()
-
-            let updates = try rows.map { row -> StandardStatusUpdateResponse in
-                let id = try row.decode(column: "id", as: UUID.self).uuidString
-                let standardID = try row.decode(column: "standard_id", as: UUID.self).uuidString
-                let status = try row.decode(column: "status", as: String.self)
-                let sourceTag = try row.decode(column: "source_tag", as: String.self)
-                let changedAt = try row.decode(column: "changed_at", as: String.self)
-
-                return StandardStatusUpdateResponse(
-                    id: id,
-                    standardID: standardID,
-                    status: status,
-                    sourceTag: sourceTag,
-                    changedAt: changedAt
-                )
-            }
-
-            print("Standard Status Timeline retrieval PASS: \(updates.count) updates")
-            print("standardID: \(standardID.uuidString)")
-            print("Status Timeline sort: changed_at ASC")
-
-            let response = Response(status: .ok)
-            try response.content.encode(updates)
-            return response
-        }
+        registerStandardStatusTimelineReadRoutes(on: apiV1)
 
         apiV1.get("shift-handover", "log") { req async throws -> Response in
             guard let sql = req.db as? SQLDatabase else {
