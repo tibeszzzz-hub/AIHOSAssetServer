@@ -1480,52 +1480,7 @@ public struct AIHOSAssetServer {
             return response
         }
 
-        apiV1.get("assets", ":assetID", "payload-text") { req async throws -> Response in
-            guard let sql = req.db as? SQLDatabase else {
-                return Response(status: .internalServerError)
-            }
-
-            guard let assetIDString = req.parameters.get("assetID"),
-                  let assetID = UUID(uuidString: assetIDString) else {
-                print("Payload Text retrieval failed: invalid assetID")
-                return Response(status: .badRequest)
-            }
-
-            let rows = try await sql.raw("""
-                SELECT
-                    id,
-                    "assetRecordID",
-                    payload_text,
-                    source_tag,
-                    created_at
-                FROM asset_payload_texts
-                WHERE "assetRecordID" = \(bind: assetID)
-                ORDER BY created_at ASC
-            """).all()
-
-            let payloadTexts = try rows.map { row -> PayloadTextResponse in
-                let id = try row.decode(column: "id", as: UUID.self).uuidString
-                let assetRecordID = try row.decode(column: "assetRecordID", as: UUID.self).uuidString
-                let payloadText = try row.decode(column: "payload_text", as: String?.self)
-                let sourceTag = try row.decode(column: "source_tag", as: String.self)
-                let createdAt = try row.decode(column: "created_at", as: String.self)
-
-                return PayloadTextResponse(
-                    id: id,
-                    assetRecordID: assetRecordID,
-                    payloadText: payloadText,
-                    sourceTag: sourceTag,
-                    createdAt: createdAt
-                )
-            }
-
-            print("Payload Text retrieval PASS: \(payloadTexts.count) entries")
-            print("Source Awareness: payload_text returned separately from original asset media")
-
-            let response = Response(status: .ok)
-            try response.content.encode(payloadTexts)
-            return response
-        }
+        registerPayloadTextReadRoutes(on: apiV1)
 
         apiV1.post("assets", ":assetID", "transcribe-audio") { req async throws -> Response in
             guard let sql = req.db as? SQLDatabase else {
