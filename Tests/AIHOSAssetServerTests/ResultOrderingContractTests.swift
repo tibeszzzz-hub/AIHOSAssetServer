@@ -52,10 +52,14 @@ private let expectedStatusTimelineOrderByClauses: [String] = [
     "ORDER BY changed_at ASC"                               // GET /api/v1/standards/:id/status-updates
 ]
 
-/// The six clauses remaining in `AIHOSAssetServer.swift`, in source order.
+/// The single clause in `OperationalStandardReadRoutes.swift`.
+private let expectedStandardsReadOrderByClauses: [String] = [
+    "ORDER BY created_at ASC"                               // GET /api/v1/standards
+]
+
+/// The five clauses remaining in `AIHOSAssetServer.swift`, in source order.
 private let expectedOrderByClauses: [String] = [
     #"ORDER BY asset_records."captureTimestamp" ASC"#,      // GET /api/v1/records
-    "ORDER BY created_at ASC",                              // GET /api/v1/standards
     #"ORDER BY "created_at" ASC"#,                          // GET /api/v1/assets/:id/decision-traces
     #"ORDER BY "fileName" ASC"#,                            // POST /api/v1/assets/:id/transcribe-audio
     #"ORDER BY "standardKey" ASC"#,                         // GET /api/v1/gaps/mechanical
@@ -69,14 +73,15 @@ struct ResultOrderingContractTests {
     func orderByClausesAreExact() throws {
         let clauses = parseOrderByClauses(inSource: try serverSourceText())
 
-        #expect(clauses.count == 6, "Found \(clauses.count) ORDER BY clauses: \(clauses)")
+        #expect(clauses.count == 5, "Found \(clauses.count) ORDER BY clauses: \(clauses)")
         #expect(clauses == expectedOrderByClauses)
 
         for (file, expected) in [
             ("TimestampDiagnostics.swift", expectedDiagnosticOrderByClauses),
             ("OperationalStandardHelpers.swift", expectedStandardOrderByClauses),
             ("PayloadTextReadRoutes.swift", expectedPayloadTextOrderByClauses),
-            ("StandardStatusTimelineReadRoutes.swift", expectedStatusTimelineOrderByClauses)
+            ("StandardStatusTimelineReadRoutes.swift", expectedStatusTimelineOrderByClauses),
+            ("OperationalStandardReadRoutes.swift", expectedStandardsReadOrderByClauses)
         ] {
             let source = try #require(
                 try serverModuleSourceTexts().first { $0.name == file }?.text,
@@ -99,6 +104,7 @@ struct ResultOrderingContractTests {
                 + expectedStandardOrderByClauses
                 + expectedPayloadTextOrderByClauses
                 + expectedStatusTimelineOrderByClauses
+                + expectedStandardsReadOrderByClauses
         ).sorted())
     }
 
