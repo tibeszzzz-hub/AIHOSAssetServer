@@ -37,9 +37,13 @@ private let expectedDiagnosticOrderByClauses: [String] = [
     "ORDER BY id"                                           // timestampReadExpectationDiagnosticQuery (A1a)
 ]
 
-/// The nine clauses remaining in `AIHOSAssetServer.swift`, in source order.
+/// The single clause in `OperationalStandardHelpers.swift`.
+private let expectedStandardOrderByClauses: [String] = [
+    "ORDER BY changed_at DESC"                              // isStandardActive — latest status wins
+]
+
+/// The eight clauses remaining in `AIHOSAssetServer.swift`, in source order.
 private let expectedOrderByClauses: [String] = [
-    "ORDER BY changed_at DESC",                             // isStandardActive — latest status wins
     #"ORDER BY asset_records."captureTimestamp" ASC"#,      // GET /api/v1/records
     "ORDER BY created_at ASC",                              // GET /api/v1/standards
     "ORDER BY changed_at ASC",                              // GET /api/v1/standards/:id/status-updates
@@ -57,14 +61,19 @@ struct ResultOrderingContractTests {
     func orderByClausesAreExact() throws {
         let clauses = parseOrderByClauses(inSource: try serverSourceText())
 
-        #expect(clauses.count == 9, "Found \(clauses.count) ORDER BY clauses: \(clauses)")
+        #expect(clauses.count == 8, "Found \(clauses.count) ORDER BY clauses: \(clauses)")
         #expect(clauses == expectedOrderByClauses)
 
-        let diagnosticSource = try #require(
-            try serverModuleSourceTexts().first { $0.name == "TimestampDiagnostics.swift" }?.text,
-            "TimestampDiagnostics.swift is missing from the library"
-        )
-        #expect(parseOrderByClauses(inSource: diagnosticSource) == expectedDiagnosticOrderByClauses)
+        for (file, expected) in [
+            ("TimestampDiagnostics.swift", expectedDiagnosticOrderByClauses),
+            ("OperationalStandardHelpers.swift", expectedStandardOrderByClauses)
+        ] {
+            let source = try #require(
+                try serverModuleSourceTexts().first { $0.name == file }?.text,
+                "\(file) is missing from the library"
+            )
+            #expect(parseOrderByClauses(inSource: source) == expected, "Ordering clauses changed in \(file)")
+        }
     }
 
     @Test("The library as a whole still has exactly ten ordering clauses")
@@ -74,7 +83,9 @@ struct ResultOrderingContractTests {
         let clauses = parseOrderByClauses(inSource: try serverModuleSourceText())
 
         #expect(clauses.count == 10, "Found \(clauses.count) ORDER BY clauses in the library: \(clauses)")
-        #expect(clauses.sorted() == (expectedOrderByClauses + expectedDiagnosticOrderByClauses).sorted())
+        #expect(clauses.sorted() == (
+            expectedOrderByClauses + expectedDiagnosticOrderByClauses + expectedStandardOrderByClauses
+        ).sorted())
     }
 
     @Test("Exactly one ordering clause is descending, and it is the status lookup")
