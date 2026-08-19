@@ -1247,69 +1247,7 @@ public struct AIHOSAssetServer {
             return response
         }
 
-        apiV1.get("assets", ":assetID", "decision-traces") { req async throws -> Response in
-            guard let sql = req.db as? SQLDatabase else {
-                return Response(status: .internalServerError)
-            }
-
-            guard let assetIDString = req.parameters.get("assetID"),
-                  let assetID = UUID(uuidString: assetIDString) else {
-                print("Observation Decision Trace retrieval failed: invalid assetID")
-                let response = Response(status: .badRequest)
-                try response.content.encode([
-                    "reason": "invalid asset id"
-                ])
-                return response
-            }
-
-            let assetRows = try await sql.raw("""
-                SELECT id
-                FROM asset_records
-                WHERE id = \(bind: assetID)
-                LIMIT 1
-            """).all()
-
-            guard assetRows.count == 1 else {
-                print("Observation Decision Trace retrieval failed: asset not found \(assetID.uuidString)")
-                return Response(status: .notFound)
-            }
-
-            let rows = try await sql.raw("""
-                SELECT
-                    id,
-                    target_asset_record_id,
-                    "decision_type",
-                    "source_tag",
-                    "created_at"
-                FROM decision_traces
-                WHERE target_asset_record_id = \(bind: assetID)
-                ORDER BY "created_at" ASC
-            """).all()
-
-            let decisionTraces = try rows.map { row -> ObservationDecisionTraceResponse in
-                let id = try row.decode(column: "id", as: UUID.self).uuidString
-                let targetAssetRecordID = try row.decode(column: "target_asset_record_id", as: UUID.self).uuidString
-                let decisionType = try row.decode(column: "decision_type", as: String.self)
-                let sourceTag = try row.decode(column: "source_tag", as: String.self)
-                let createdAt = try row.decode(column: "created_at", as: String.self)
-
-                return ObservationDecisionTraceResponse(
-                    id: id,
-                    targetAssetRecordID: targetAssetRecordID,
-                    decisionType: decisionType,
-                    sourceTag: sourceTag,
-                    createdAt: createdAt
-                )
-            }
-
-            print("Observation Decision Trace retrieval PASS: \(decisionTraces.count) traces")
-            print("targetAssetRecordID: \(assetID.uuidString)")
-            print("Observation Decision Trace sort: created_at ASC")
-
-            let response = Response(status: .ok)
-            try response.content.encode(decisionTraces)
-            return response
-        }
+        registerObservationDecisionTraceReadRoutes(on: apiV1)
 
         registerFileDeliveryRoutes(on: apiV1, storageDirectory: storageDirectory)
 

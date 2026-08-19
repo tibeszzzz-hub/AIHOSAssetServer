@@ -57,10 +57,14 @@ private let expectedStandardsReadOrderByClauses: [String] = [
     "ORDER BY created_at ASC"                               // GET /api/v1/standards
 ]
 
-/// The five clauses remaining in `AIHOSAssetServer.swift`, in source order.
+/// The single clause in `ObservationDecisionTraceReadRoutes.swift`.
+private let expectedDecisionTraceOrderByClauses: [String] = [
+    #"ORDER BY "created_at" ASC"#                           // GET /api/v1/assets/:id/decision-traces
+]
+
+/// The four clauses remaining in `AIHOSAssetServer.swift`, in source order.
 private let expectedOrderByClauses: [String] = [
     #"ORDER BY asset_records."captureTimestamp" ASC"#,      // GET /api/v1/records
-    #"ORDER BY "created_at" ASC"#,                          // GET /api/v1/assets/:id/decision-traces
     #"ORDER BY "fileName" ASC"#,                            // POST /api/v1/assets/:id/transcribe-audio
     #"ORDER BY "standardKey" ASC"#,                         // GET /api/v1/gaps/mechanical
     #"ORDER BY "standardKey" ASC"#                          // GET /api/v1/state/pulse
@@ -73,7 +77,7 @@ struct ResultOrderingContractTests {
     func orderByClausesAreExact() throws {
         let clauses = parseOrderByClauses(inSource: try serverSourceText())
 
-        #expect(clauses.count == 5, "Found \(clauses.count) ORDER BY clauses: \(clauses)")
+        #expect(clauses.count == 4, "Found \(clauses.count) ORDER BY clauses: \(clauses)")
         #expect(clauses == expectedOrderByClauses)
 
         for (file, expected) in [
@@ -81,7 +85,8 @@ struct ResultOrderingContractTests {
             ("OperationalStandardHelpers.swift", expectedStandardOrderByClauses),
             ("PayloadTextReadRoutes.swift", expectedPayloadTextOrderByClauses),
             ("StandardStatusTimelineReadRoutes.swift", expectedStatusTimelineOrderByClauses),
-            ("OperationalStandardReadRoutes.swift", expectedStandardsReadOrderByClauses)
+            ("OperationalStandardReadRoutes.swift", expectedStandardsReadOrderByClauses),
+            ("ObservationDecisionTraceReadRoutes.swift", expectedDecisionTraceOrderByClauses)
         ] {
             let source = try #require(
                 try serverModuleSourceTexts().first { $0.name == file }?.text,
@@ -105,6 +110,7 @@ struct ResultOrderingContractTests {
                 + expectedPayloadTextOrderByClauses
                 + expectedStatusTimelineOrderByClauses
                 + expectedStandardsReadOrderByClauses
+                + expectedDecisionTraceOrderByClauses
         ).sorted())
     }
 
