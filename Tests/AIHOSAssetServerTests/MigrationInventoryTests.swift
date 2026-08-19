@@ -79,8 +79,14 @@ struct MigrationInventoryTests {
         let registered = parseMigrationRegistrations(inSource: try serverSourceText())
 
         // Pinned so nobody "fixes" the file layout and assumes the order followed it.
+        //
+        // `registered.last` is contract: it is the twelfth entry of the pinned execution
+        // order. `declared.last` is not — it tracks which file happens to sort last in
+        // the library and therefore moves with each extraction. F-D1 made it
+        // CreateLaneMetadataFoundation in SchemaMigrations.swift; F-D2 makes it the last
+        // declaration in TriggerMigrations.swift.
         #expect(declared != registered)
-        #expect(declared.last == "CreateLaneMetadataFoundation")
+        #expect(declared.last == "ActivateDecisionTraceGovernanceTriggers")
         #expect(registered.last == "CreateStandardStatusUpdates")
     }
 
