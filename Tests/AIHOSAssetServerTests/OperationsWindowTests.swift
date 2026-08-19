@@ -143,7 +143,9 @@ struct OperationsTimeZoneTests {
 
     @Test("No zone name is hardcoded anywhere in the server source")
     func noHardcodedZone() throws {
-        let source = try serverSourceText()
+        // Whole library since F-E1 moved the resolver into its own file: a zone name
+        // hardcoded there would be just as wrong and must not escape this guard.
+        let source = try serverModuleSourceText()
 
         // The interim zone is Europe/Vienna and the later target is Europe/Lisbon. A
         // move between them must be a configuration change only, which is only true if
@@ -160,8 +162,9 @@ struct OperationsTimeZoneTests {
         #expect(lines.contains { $0.hasPrefix("let operationsTimeZone = try resolvedOperationsTimeZone()") })
 
         // A future reader must be able to see that this is interim configuration and
-        // that Organization will own it, without asking anyone.
-        let source = try serverSourceText()
+        // that Organization will own it, without asking anyone. The documentation moved
+        // with the resolver in F-E1; the startup call stays in the composition root.
+        let source = try serverModuleSourceText()
         #expect(source.contains("INTERIM CONFIGURATION"))
         #expect(source.contains("Organization"))
     }
