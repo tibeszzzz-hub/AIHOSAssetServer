@@ -370,9 +370,10 @@ struct ObservationCountingTests {
 
     @Test("The counting SQL is a half-open text range with a shape guard and no cast")
     func sqlUsesTheHalfOpenRange() throws {
+        // Whole library since F-E2 moved the window helpers into their own file.
         let body = try #require(declarationBody(
             startingWithLinePrefix: "func observationCountInWindowQuery(",
-            inSource: try serverSourceText()
+            inSource: try serverModuleSourceText()
         ))
         let sql = body.joined(separator: "\n")
 
@@ -389,7 +390,9 @@ struct ObservationCountingTests {
 
     @Test("There is exactly one window helper, used by both calculations")
     func singleWindowHelper() throws {
-        let lines = trimmedSourceLines(try serverSourceText())
+        // Declaration and call sites now live in different files, so both are counted
+        // across the library. The point is unchanged: one helper, used twice.
+        let lines = trimmedSourceLines(try serverModuleSourceText())
 
         let helperDeclarations = lines.filter { $0.hasPrefix("func observationCountInWindowQuery(") }
         let callSites = lines.filter { $0.contains("observationCountInWindowQuery(bounds:") && $0.contains("sql.raw") }
@@ -412,7 +415,7 @@ struct DecisionTraceWindowTests {
     private func decisionQueryBody() throws -> String {
         let body = try #require(declarationBody(
             startingWithLinePrefix: "func leaveEmptyDecisionCountQuery(",
-            inSource: try serverSourceText()
+            inSource: try serverModuleSourceText()
         ))
         #expect(body.isEmpty == false)
         return body.joined(separator: "\n")
@@ -452,7 +455,7 @@ struct DecisionTraceWindowTests {
 
     @Test("There is exactly one decision-trace helper, used by both calculations")
     func singleDecisionHelper() throws {
-        let lines = trimmedSourceLines(try serverSourceText())
+        let lines = trimmedSourceLines(try serverModuleSourceText())
 
         #expect(lines.filter { $0.hasPrefix("func leaveEmptyDecisionCountQuery(") }.count == 1)
         #expect(lines.filter { $0.hasPrefix("leaveEmptyDecisionCountQuery(") }.count == 2)
