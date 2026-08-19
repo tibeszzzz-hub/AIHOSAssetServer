@@ -1412,22 +1412,7 @@ public struct AIHOSAssetServer {
             return response
         }
 
-        apiV1.get("files", ":fileName") { req async throws -> Response in
-            guard let fileName = req.parameters.get("fileName") else {
-                return Response(status: .badRequest)
-            }
-
-            let filePath = storageDirectory + "/" + fileName
-
-            guard FileManager.default.fileExists(atPath: filePath) else {
-                print("File delivery failed: missing file \(fileName)")
-                return Response(status: .notFound)
-            }
-
-            print("File delivery PASS: \(fileName)")
-            print("File delivery path: \(filePath)")
-            return req.fileio.streamFile(at: filePath)
-        }
+        registerFileDeliveryRoutes(on: apiV1, storageDirectory: storageDirectory)
 
         apiV1.post("assets", ":assetID", "payload-text") { req async throws -> Response in
             guard let sql = req.db as? SQLDatabase else {

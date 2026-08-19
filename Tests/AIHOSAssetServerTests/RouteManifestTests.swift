@@ -85,7 +85,11 @@ struct RouteManifestTests {
 
     @Test("The server source registers exactly the 21 expected routes, no more and no fewer")
     func serverSourceMatchesExpectedRouteManifest() throws {
-        let source = try serverSourceText()
+        // Whole library since F-F1 moved the first route group into its own file. The
+        // manifest is a pinned count plus a set comparison, so widening the scan area
+        // changes nothing about what it demands — a route that disappeared or appeared
+        // anywhere in the production library still fails this.
+        let source = try serverModuleSourceText()
         let registrations = parseRouteRegistrations(inSource: source)
 
         // Positive control that the parser found something at all — a scanner that
@@ -111,7 +115,7 @@ struct RouteManifestTests {
 
     @Test("Exactly 20 routes are gated and exactly one is the classified liveness probe")
     func gatedAndUngatedSplitIsExact() throws {
-        let source = try serverSourceText()
+        let source = try serverModuleSourceText()
         let registrations = parseRouteRegistrations(inSource: source)
 
         let gated = registrations.filter(\.isGated).compactMap(\.signature)
@@ -125,7 +129,7 @@ struct RouteManifestTests {
 
     @Test("The one ungated route is exactly the one entry in the runtime allowlist")
     func ungatedRouteMatchesRuntimeAllowlist() throws {
-        let source = try serverSourceText()
+        let source = try serverModuleSourceText()
         let ungated = parseRouteRegistrations(inSource: source)
             .filter { !$0.isGated }
             .compactMap(\.signature)

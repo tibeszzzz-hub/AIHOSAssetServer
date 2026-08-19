@@ -367,16 +367,14 @@ struct MachineGateInventoryTests {
 
     @Test("The server source registers every route except the liveness probe through the gate")
     func serverSourceHasNoUngatedRegistration() throws {
-        // Inventory over the real production source file. The boot check
+        // Inventory over the real production library. The boot check
         // (verifyMachineGateCoverage) catches an escaped route at startup; this catches
         // it at test time, before anyone deploys.
-        let serverSource = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()  // AIHOSAssetServerTests
-            .deletingLastPathComponent()  // Tests
-            .deletingLastPathComponent()  // package root
-            .appendingPathComponent("Sources/AIHOSAssetServer/AIHOSAssetServer.swift")
-
-        let source = try String(contentsOf: serverSource, encoding: .utf8)
+        //
+        // F-F1 widened this from the single main file to the whole library, which makes
+        // the guard stronger rather than weaker: an ungated registration inside a route
+        // file was previously invisible to it entirely.
+        let source = try serverModuleSourceText()
         let lines = source.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
 
         let routeVerbs = ["get", "post", "put", "patch", "delete", "on", "webSocket", "group", "grouped"]
