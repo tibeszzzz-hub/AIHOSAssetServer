@@ -270,51 +270,7 @@ public struct AIHOSAssetServer {
         // `SELECT 1` succeeded and exposes no product data, credentials or configuration.
         registerDatabaseHealthRoutes(on: app)
 
-        // Writes to asset_records in the production database - gated (PSKS-008).
-        gated.get("test", "immutable") { req async throws -> HTTPStatus in
-            guard let sql = req.db as? SQLDatabase else {
-                return .internalServerError
-            }
-
-            let testID = UUID().uuidString
-
-            do {
-                try await sql.raw("""
-                INSERT INTO asset_records (id, "captureTimestamp", "sourceTag")
-                VALUES ('\(unsafeRaw: testID)', 'test-capture-timestamp', '[TEST]');
-                """).run()
-                print("Immutable validation INSERT PASS")
-            } catch {
-                print("Immutable validation INSERT failed: \(error)")
-                return .internalServerError
-            }
-
-            do {
-                try await sql.raw("""
-                UPDATE asset_records
-                SET "sourceTag" = '[TEST-UPDATED]'
-                WHERE id = '\(unsafeRaw: testID)';
-                """).run()
-                print("Immutable validation UPDATE unexpectedly succeeded")
-                return .internalServerError
-            } catch {
-                print("Immutable validation UPDATE blocked by governance trigger")
-            }
-
-            do {
-                try await sql.raw("""
-                DELETE FROM asset_records
-                WHERE id = '\(unsafeRaw: testID)';
-                """).run()
-                print("Immutable validation DELETE unexpectedly succeeded")
-                return .internalServerError
-            } catch {
-                print("Immutable validation DELETE blocked by governance trigger")
-            }
-
-            print("Immutable validation PASS")
-            return .ok
-        }
+        registerImmutabilityDiagnosticRoutes(on: gated)
 
         // Accepts uploads up to 10 MB and runs OCR on the server - gated (PSKS-008).
         gated.on(.POST, "test", "vision-ocr", body: .collect(maxSize: "10mb")) { req async throws -> Response in
