@@ -61,12 +61,21 @@ struct ObservationDecisionTraceReadRouteTests {
         #expect(lines.filter { $0 == call }.count == 1)
     }
 
-    @Test("The write route deliberately stayed behind")
-    func writeRouteRemainsInTheCompositionRoot() throws {
+    @Test("The write route lives in its own file, not in this one")
+    func writeRouteIsSeparate() throws {
+        // F-F5 moved the read side and left the write in the composition root; F-G6
+        // then moved the write into a file of its own. What this guards is unchanged:
+        // the read file holds reads only.
         let write = #"apiV1.post("assets", ":assetID", "decision-traces")"#
 
-        #expect(try serverSourceText().contains(write))
-        #expect(try routeFileText().contains(write) == false)
+        #expect(try routeFileText().contains(write) == false,
+                "The write route was folded into \(routeFileName)")
+
+        let writeSource = try #require(
+            try serverModuleSourceTexts().first { $0.name == "ObservationDecisionTraceWriteRoutes.swift" }?.text,
+            "ObservationDecisionTraceWriteRoutes.swift is missing from the library"
+        )
+        #expect(writeSource.contains(write))
     }
 
     // MARK: Dependencies
