@@ -62,7 +62,7 @@ struct OperationalStandardStatusRouteTests {
         #expect(lines.filter { $0 == call }.count == 1)
     }
 
-    @Test("Exactly four registrations remain in the composition root")
+    @Test("Exactly three registrations remain in the composition root")
     func remainingRegistrationsArePinned() throws {
         // Uses the manifest parser rather than a hand-rolled scan, so migration
         // registrations and other lines that merely resemble route calls cannot be
@@ -74,8 +74,7 @@ struct OperationalStandardStatusRouteTests {
         #expect(remaining == [
             "POST /api/v1/assets/:assetID/transcribe-audio",
             "POST /api/v1/audio",
-            "POST /api/v1/sync",
-            "POST /test/vision-ocr"
+            "POST /api/v1/sync"
         ], "Registrations left in main(): \(remaining)")
     }
 
