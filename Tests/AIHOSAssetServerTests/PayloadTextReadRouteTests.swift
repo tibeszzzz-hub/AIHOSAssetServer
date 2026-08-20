@@ -61,15 +61,22 @@ struct PayloadTextReadRouteTests {
         #expect(lines.filter { $0 == call }.count == 1)
     }
 
-    @Test("The write route deliberately stayed behind")
-    func writeRouteRemainsInTheCompositionRoot() throws {
-        // Only the read side moved. Pinned so the split is a stated decision rather
-        // than something a later reader has to reconstruct — and so that quietly
-        // dragging the write route across counts as a change, not a tidy-up.
+    @Test("The write route lives in its own file, not in this one")
+    func writeRouteIsSeparate() throws {
+        // F-F2 moved the read side and left the write in the composition root; F-G4
+        // then moved the write into a file of its own. What this test has always
+        // guarded is the same either way: the read file holds reads only, and the
+        // write may not be quietly folded in.
         let write = #"apiV1.post("assets", ":assetID", "payload-text")"#
 
-        #expect(try serverSourceText().contains(write))
-        #expect(try routeFileText().contains(write) == false)
+        #expect(try routeFileText().contains(write) == false,
+                "The write route was folded into \(routeFileName)")
+
+        let writeSource = try #require(
+            try serverModuleSourceTexts().first { $0.name == "PayloadTextWriteRoutes.swift" }?.text,
+            "PayloadTextWriteRoutes.swift is missing from the library"
+        )
+        #expect(writeSource.contains(write))
     }
 
     // MARK: Dependencies

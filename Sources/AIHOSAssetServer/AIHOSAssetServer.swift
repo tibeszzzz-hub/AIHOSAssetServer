@@ -1005,71 +1005,7 @@ public struct AIHOSAssetServer {
 
         registerFileDeliveryRoutes(on: apiV1, storageDirectory: storageDirectory)
 
-        apiV1.post("assets", ":assetID", "payload-text") { req async throws -> Response in
-            guard let sql = req.db as? SQLDatabase else {
-                return Response(status: .internalServerError)
-            }
-
-            guard let assetIDString = req.parameters.get("assetID"),
-                  let assetID = UUID(uuidString: assetIDString) else {
-                print("Payload Text INSERT failed: invalid assetID")
-                return Response(status: .badRequest)
-            }
-
-            let payload: PayloadTextRequest
-
-            do {
-                payload = try req.content.decode(PayloadTextRequest.self)
-            } catch {
-                print("Payload Text decode failed: \(error)")
-                return Response(status: .badRequest)
-            }
-
-            let assetRows = try await sql.raw("""
-                SELECT id
-                FROM asset_records
-                WHERE id = \(bind: assetID)
-            """).all()
-
-            guard assetRows.count == 1 else {
-                print("Payload Text INSERT failed: asset not found \(assetID.uuidString)")
-                return Response(status: .notFound)
-            }
-
-            let payloadTextID = UUID()
-            let createdAt = ISO8601DateFormatter().string(from: Date())
-
-            do {
-                try await sql.raw("""
-                    INSERT INTO asset_payload_texts
-                    (id, "assetRecordID", payload_text, source_tag, created_at)
-                    VALUES
-                    (\(bind: payloadTextID), \(bind: assetID), \(bind: payload.payloadText), \(bind: payload.sourceTag), \(bind: createdAt));
-                """).run()
-            } catch {
-                print("Payload Text INSERT failed: \(error)")
-                return Response(status: .internalServerError)
-            }
-
-            print("Payload Text INSERT PASS")
-            print("assetRecordID: \(assetID.uuidString)")
-            print("payloadTextID: \(payloadTextID.uuidString)")
-            print("sourceTag: \(payload.sourceTag)")
-            print("createdAt: \(createdAt)")
-            print("Source Awareness: original asset unchanged; payload_text stored as subordinate representation")
-
-            let response = Response(status: .ok)
-            try response.content.encode(
-                PayloadTextResponse(
-                    id: payloadTextID.uuidString,
-                    assetRecordID: assetID.uuidString,
-                    payloadText: payload.payloadText,
-                    sourceTag: payload.sourceTag,
-                    createdAt: createdAt
-                )
-            )
-            return response
-        }
+        registerPayloadTextWriteRoutes(on: apiV1)
 
         registerPayloadTextReadRoutes(on: apiV1)
 
