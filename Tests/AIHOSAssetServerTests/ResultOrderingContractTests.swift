@@ -150,8 +150,17 @@ struct ResultOrderingContractTests {
             "ObservationRecordReadRoutes.swift is missing from the library"
         )
         #expect(countDescendingDateComparators(inSource: recordsSource) == 1)
-        #expect(countDescendingDateComparators(inSource: try serverSourceText()) == 1,
-                "The shift-handover comparator left the composition root")
+
+        let handoverSource = try #require(
+            try serverModuleSourceTexts().first { $0.name == "ShiftHandoverReadRoutes.swift" }?.text,
+            "ShiftHandoverReadRoutes.swift is missing from the library"
+        )
+        #expect(countDescendingDateComparators(inSource: handoverSource) == 1)
+
+        // Since F-F7 both comparators live in route files, so the composition root has
+        // none left. Asserted rather than assumed: a comparator reappearing in main()
+        // would mean a route was registered there again.
+        #expect(countDescendingDateComparators(inSource: try serverSourceText()) == 0)
     }
 
     @Test("The shift-handover query is the one read with no SQL ordering at all")
