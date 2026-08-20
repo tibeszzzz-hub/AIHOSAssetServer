@@ -65,12 +65,24 @@ struct OperationalStandardReadRouteTests {
 
         for write in [
             #"apiV1.post("standards")"#,
-            #"apiV1.on(.PATCH, "standards", ":standardID", "status")"#,
-            #"apiV1.post("standards", "night-photo")"#
+            #"apiV1.on(.PATCH, "standards", ":standardID", "status")"#
         ] {
             #expect(source.contains(write), "Write route left the composition root: \(write)")
             #expect(routeFile.contains(write) == false, "Write route appeared in \(routeFileName): \(write)")
         }
+
+        // The night-photo fixation is also a write, and F-G1 moved it into a file of
+        // its own. What this test guards is unchanged either way: no write may end up
+        // in the standards READ file.
+        let nightPhoto = #"apiV1.post("standards", "night-photo")"#
+        #expect(routeFile.contains(nightPhoto) == false,
+                "A write route appeared in \(routeFileName): \(nightPhoto)")
+
+        let nightPhotoSource = try #require(
+            try serverModuleSourceTexts().first { $0.name == "NightPhotoStandardRoutes.swift" }?.text,
+            "NightPhotoStandardRoutes.swift is missing from the library"
+        )
+        #expect(nightPhotoSource.contains(nightPhoto))
     }
 
     @Test("The status timeline route stayed in its own file")

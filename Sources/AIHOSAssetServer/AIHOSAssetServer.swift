@@ -1272,30 +1272,7 @@ public struct AIHOSAssetServer {
             return response
         }
 
-        apiV1.post("standards", "night-photo") { req async throws -> HTTPStatus in
-            guard let sql = req.db as? SQLDatabase else {
-                return .internalServerError
-            }
-
-            try await sql.raw("""
-                INSERT INTO operational_standards (id, "standardKey", "description", "sourceTag", "startHour", "endHour", "requiredCount")
-                SELECT
-                    \(bind: UUID()),
-                    \(bind: "night-photo-22-23"),
-                    \(bind: "At least one photo between 22:00 and 23:00"),
-                    \(bind: "[?]"),
-                    \(bind: 22),
-                    \(bind: 23),
-                    \(bind: 1)
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM operational_standards
-                    WHERE "standardKey" = \(bind: "night-photo-22-23")
-                );
-            """).run()
-
-            print("Operational standard fixation PASS: night-photo-22-23")
-            return .ok
-        }
+        registerNightPhotoStandardRoutes(on: apiV1)
 
         apiV1.post("decisions") { req async throws -> Response in
             guard let sql = req.db as? SQLDatabase else {

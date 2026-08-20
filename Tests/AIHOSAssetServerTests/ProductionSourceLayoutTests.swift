@@ -22,7 +22,7 @@ import Foundation
 @Suite("F-B production source layout")
 struct ProductionSourceLayoutTests {
 
-    @Test("The library target is exactly its twenty-one files, in the unchanged directory")
+    @Test("The library target is exactly its twenty-two files, in the unchanged directory")
     func libraryLayoutUnchanged() throws {
         let module = try serverModuleSourceTexts()
 
@@ -35,6 +35,7 @@ struct ProductionSourceLayoutTests {
             "LaneValidationHelpers.swift",
             "MachineAuthGate.swift",
             "MechanicalGapReadRoutes.swift",
+            "NightPhotoStandardRoutes.swift",
             "ObservationDecisionTraceReadRoutes.swift",
             "ObservationRecordReadRoutes.swift",
             "ObservationWindowHelpers.swift",
@@ -71,6 +72,7 @@ struct ProductionSourceLayoutTests {
             "LaneValidationHelpers.swift",
             "MachineAuthGate.swift",
             "MechanicalGapReadRoutes.swift",
+            "NightPhotoStandardRoutes.swift",
             "ObservationDecisionTraceReadRoutes.swift",
             "ObservationRecordReadRoutes.swift",
             "ObservationWindowHelpers.swift",
