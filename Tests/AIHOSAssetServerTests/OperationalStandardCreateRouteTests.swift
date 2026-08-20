@@ -57,13 +57,21 @@ struct OperationalStandardCreateRouteTests {
         #expect(lines.filter { $0 == call }.count == 1)
     }
 
-    @Test("The status PATCH stayed in the composition root and did not follow")
-    func statusPatchDidNotMove() throws {
+    @Test("The status PATCH lives in its own file, not in this one")
+    func statusPatchIsSeparate() throws {
+        // F-G7 moved the create and left the PATCH in the composition root; F-G8 then
+        // moved the PATCH into a file of its own. What this guards is unchanged: create
+        // and status are different operations and neither may absorb the other.
         let patch = #"apiV1.on(.PATCH, "standards", ":standardID", "status")"#
 
-        #expect(try serverSourceText().contains(patch))
         #expect(try routeFileText().contains(patch) == false,
-                "The status route was dragged along with the create extraction")
+                "The status route was absorbed into \(routeFileName)")
+
+        let statusSource = try #require(
+            try serverModuleSourceTexts().first { $0.name == "OperationalStandardStatusRoutes.swift" }?.text,
+            "OperationalStandardStatusRoutes.swift is missing from the library"
+        )
+        #expect(statusSource.contains(patch))
     }
 
     // MARK: Dependencies

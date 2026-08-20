@@ -64,14 +64,20 @@ struct StandardStatusTimelineReadRouteTests {
     func writeRoutesRemainInTheCompositionRoot() throws {
         // Creating a standard and changing its status are writes and stay in the
         // composition root. Pinned so moving them later is a decision, not a tidy-up.
-        let source = try serverSourceText()
         let routeFile = try routeFileText()
 
         // The PATCH is still in the composition root; F-G7 moved the create into its
         // own file. Either way, no write may appear in the standards READ file.
+        // Both standard writes now live in their own files. What this guards is
+        // unchanged: no write may appear in a standards READ file.
         let patch = #"apiV1.on(.PATCH, "standards", ":standardID", "status")"#
-        #expect(source.contains(patch), "Write route left the composition root: \(patch)")
         #expect(routeFile.contains(patch) == false, "Write route appeared in \(routeFileName): \(patch)")
+        let statusSource = try #require(
+            try serverModuleSourceTexts().first { $0.name == "OperationalStandardStatusRoutes.swift" }?.text,
+            "OperationalStandardStatusRoutes.swift is missing from the library"
+        )
+        #expect(statusSource.contains(patch))
+
 
         let create = #"apiV1.post("standards")"#
         #expect(routeFile.contains(create) == false, "Write route appeared in \(routeFileName): \(create)")
