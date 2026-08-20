@@ -63,13 +63,20 @@ struct OperationalStandardReadRouteTests {
         let source = try serverSourceText()
         let routeFile = try routeFileText()
 
-        for write in [
-            #"apiV1.post("standards")"#,
-            #"apiV1.on(.PATCH, "standards", ":standardID", "status")"#
-        ] {
-            #expect(source.contains(write), "Write route left the composition root: \(write)")
-            #expect(routeFile.contains(write) == false, "Write route appeared in \(routeFileName): \(write)")
-        }
+        // The PATCH is still in the composition root; F-G7 moved the create into its
+        // own file. Either way, no write may appear in the standards READ file.
+        let patch = #"apiV1.on(.PATCH, "standards", ":standardID", "status")"#
+        #expect(source.contains(patch), "Write route left the composition root: \(patch)")
+        #expect(routeFile.contains(patch) == false, "Write route appeared in \(routeFileName): \(patch)")
+
+        let create = #"apiV1.post("standards")"#
+        #expect(routeFile.contains(create) == false, "Write route appeared in \(routeFileName): \(create)")
+        let createSource = try #require(
+            try serverModuleSourceTexts().first { $0.name == "OperationalStandardCreateRoutes.swift" }?.text,
+            "OperationalStandardCreateRoutes.swift is missing from the library"
+        )
+        #expect(createSource.contains(#"apiV1.post("standards")"#))
+
 
         // The night-photo fixation is also a write, and F-G1 moved it into a file of
         // its own. What this test guards is unchanged either way: no write may end up
