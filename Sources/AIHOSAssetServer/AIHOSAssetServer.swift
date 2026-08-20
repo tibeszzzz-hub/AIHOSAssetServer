@@ -268,42 +268,7 @@ public struct AIHOSAssetServer {
 
         // Deliberately outside the gate: liveness probe only. Reports whether
         // `SELECT 1` succeeded and exposes no product data, credentials or configuration.
-        app.get("health", "db") { req async -> Response in
-            req.logger.info("DB HEALTH ROUTE ENTERED")
-
-            var headers = HTTPHeaders()
-            headers.add(name: .contentType, value: "application/json")
-
-            guard let sql = req.db as? SQLDatabase else {
-                req.logger.error("DB HEALTH SQL CAST FAIL")
-                return Response(
-                    status: .internalServerError,
-                    headers: headers,
-                    body: .init(string: #"{"status":"fail","stage":"sql_cast"}"#)
-                )
-            }
-
-            req.logger.info("DB HEALTH SQL CAST PASS")
-
-            do {
-                try await sql.raw("SELECT 1").run()
-                req.logger.info("DB HEALTH SELECT 1 PASS")
-
-                return Response(
-                    status: .ok,
-                    headers: headers,
-                    body: .init(string: #"{"status":"ok","stage":"select_1"}"#)
-                )
-            } catch {
-                req.logger.error("DB HEALTH SELECT 1 FAIL: \(String(reflecting: error))")
-
-                return Response(
-                    status: .internalServerError,
-                    headers: headers,
-                    body: .init(string: #"{"status":"fail","stage":"select_1"}"#)
-                )
-            }
-        }
+        registerDatabaseHealthRoutes(on: app)
 
         // Writes to asset_records in the production database - gated (PSKS-008).
         gated.get("test", "immutable") { req async throws -> HTTPStatus in
