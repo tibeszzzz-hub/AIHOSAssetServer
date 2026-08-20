@@ -69,10 +69,14 @@ private let expectedRecordsOrderByClauses: [String] = [
     #"ORDER BY asset_records."captureTimestamp" ASC"#       // GET /api/v1/records
 ]
 
-/// The three clauses remaining in `AIHOSAssetServer.swift`, in source order.
+/// The single clause in `MechanicalGapReadRoutes.swift`.
+private let expectedGapsOrderByClauses: [String] = [
+    #"ORDER BY "standardKey" ASC"#                          // GET /api/v1/gaps/mechanical
+]
+
+/// The two clauses remaining in `AIHOSAssetServer.swift`, in source order.
 private let expectedOrderByClauses: [String] = [
     #"ORDER BY "fileName" ASC"#,                            // POST /api/v1/assets/:id/transcribe-audio
-    #"ORDER BY "standardKey" ASC"#,                         // GET /api/v1/gaps/mechanical
     #"ORDER BY "standardKey" ASC"#                          // GET /api/v1/state/pulse
 ]
 
@@ -83,7 +87,7 @@ struct ResultOrderingContractTests {
     func orderByClausesAreExact() throws {
         let clauses = parseOrderByClauses(inSource: try serverSourceText())
 
-        #expect(clauses.count == 3, "Found \(clauses.count) ORDER BY clauses: \(clauses)")
+        #expect(clauses.count == 2, "Found \(clauses.count) ORDER BY clauses: \(clauses)")
         #expect(clauses == expectedOrderByClauses)
 
         for (file, expected) in [
@@ -93,7 +97,8 @@ struct ResultOrderingContractTests {
             ("StandardStatusTimelineReadRoutes.swift", expectedStatusTimelineOrderByClauses),
             ("OperationalStandardReadRoutes.swift", expectedStandardsReadOrderByClauses),
             ("ObservationDecisionTraceReadRoutes.swift", expectedDecisionTraceOrderByClauses),
-            ("ObservationRecordReadRoutes.swift", expectedRecordsOrderByClauses)
+            ("ObservationRecordReadRoutes.swift", expectedRecordsOrderByClauses),
+            ("MechanicalGapReadRoutes.swift", expectedGapsOrderByClauses)
         ] {
             let source = try #require(
                 try serverModuleSourceTexts().first { $0.name == file }?.text,
@@ -119,6 +124,7 @@ struct ResultOrderingContractTests {
                 + expectedStandardsReadOrderByClauses
                 + expectedDecisionTraceOrderByClauses
                 + expectedRecordsOrderByClauses
+                + expectedGapsOrderByClauses
         ).sorted())
     }
 

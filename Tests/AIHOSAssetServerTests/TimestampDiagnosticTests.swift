@@ -315,7 +315,9 @@ struct TimestampDiagnosticTruthfulnessTests {
 
     @Test("Both call sites use the logger and emit no per-record print")
     func callSitesUseLoggerNotPrint() throws {
-        let lines = trimmedSourceLines(try serverSourceText())
+        // Whole library since F-F8 moved the gaps calculation into its own file; the
+        // two call sites now live in two files. The count demanded is unchanged.
+        let lines = trimmedSourceLines(try serverModuleSourceText())
 
         let callSites = lines.filter { $0.hasPrefix("logTimestampReadExpectationDiagnostic(") }
         let querySites = lines.filter { $0.contains("timestampReadExpectationDiagnosticQuery()") && $0.contains("sql.raw") }

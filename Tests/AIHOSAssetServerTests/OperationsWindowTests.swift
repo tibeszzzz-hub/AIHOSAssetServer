@@ -532,10 +532,26 @@ struct A1bPreservationTests {
 
     @Test("No per-row logging was reintroduced anywhere")
     func noPerRowLogging() throws {
-        let lines = trimmedSourceLines(try serverSourceText())
+        // Whole library: F-F8 moved the gaps calculation into its own file, so one of
+        // the two diagnostic call sites went with it. The demand is unchanged — exactly
+        // two, one per calculation, and nothing per-row anywhere.
+        let lines = trimmedSourceLines(try serverModuleSourceText())
 
         #expect(lines.contains { $0.contains("skippedTimestamp") } == false)
         #expect(lines.contains { $0.contains("skippedID") } == false)
         #expect(lines.filter { $0.hasPrefix("logTimestampReadExpectationDiagnostic(") }.count == 2)
+
+        // One each, and specifically in these two places. The library-wide count above
+        // would still pass if both ended up in the same calculation, which would mean
+        // one of them had stopped reporting.
+        let gapsSource = try #require(
+            try serverModuleSourceTexts().first { $0.name == "MechanicalGapReadRoutes.swift" }?.text,
+            "MechanicalGapReadRoutes.swift is missing from the library"
+        )
+        #expect(trimmedSourceLines(gapsSource)
+            .filter { $0.hasPrefix("logTimestampReadExpectationDiagnostic(") }.count == 1)
+        #expect(trimmedSourceLines(try serverSourceText())
+            .filter { $0.hasPrefix("logTimestampReadExpectationDiagnostic(") }.count == 1,
+                "The pulse diagnostic call left the composition root")
     }
 }
