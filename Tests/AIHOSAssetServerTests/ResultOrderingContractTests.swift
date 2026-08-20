@@ -74,10 +74,17 @@ private let expectedGapsOrderByClauses: [String] = [
     #"ORDER BY "standardKey" ASC"#                          // GET /api/v1/gaps/mechanical
 ]
 
-/// The two clauses remaining in `AIHOSAssetServer.swift`, in source order.
-private let expectedOrderByClauses: [String] = [
-    #"ORDER BY "fileName" ASC"#,                            // POST /api/v1/assets/:id/transcribe-audio
+/// The single clause in `OperationalPulseReadRoutes.swift`.
+private let expectedPulseOrderByClauses: [String] = [
     #"ORDER BY "standardKey" ASC"#                          // GET /api/v1/state/pulse
+]
+
+/// The one clause remaining in `AIHOSAssetServer.swift`.
+///
+/// With F-F9 every read route has left the composition root, so the only ordering
+/// still declared there belongs to a write path.
+private let expectedOrderByClauses: [String] = [
+    #"ORDER BY "fileName" ASC"#                             // POST /api/v1/assets/:id/transcribe-audio
 ]
 
 @Suite("Result ordering contracts")
@@ -87,7 +94,7 @@ struct ResultOrderingContractTests {
     func orderByClausesAreExact() throws {
         let clauses = parseOrderByClauses(inSource: try serverSourceText())
 
-        #expect(clauses.count == 2, "Found \(clauses.count) ORDER BY clauses: \(clauses)")
+        #expect(clauses.count == 1, "Found \(clauses.count) ORDER BY clauses: \(clauses)")
         #expect(clauses == expectedOrderByClauses)
 
         for (file, expected) in [
@@ -98,7 +105,8 @@ struct ResultOrderingContractTests {
             ("OperationalStandardReadRoutes.swift", expectedStandardsReadOrderByClauses),
             ("ObservationDecisionTraceReadRoutes.swift", expectedDecisionTraceOrderByClauses),
             ("ObservationRecordReadRoutes.swift", expectedRecordsOrderByClauses),
-            ("MechanicalGapReadRoutes.swift", expectedGapsOrderByClauses)
+            ("MechanicalGapReadRoutes.swift", expectedGapsOrderByClauses),
+            ("OperationalPulseReadRoutes.swift", expectedPulseOrderByClauses)
         ] {
             let source = try #require(
                 try serverModuleSourceTexts().first { $0.name == file }?.text,
@@ -125,6 +133,7 @@ struct ResultOrderingContractTests {
                 + expectedDecisionTraceOrderByClauses
                 + expectedRecordsOrderByClauses
                 + expectedGapsOrderByClauses
+                + expectedPulseOrderByClauses
         ).sorted())
     }
 

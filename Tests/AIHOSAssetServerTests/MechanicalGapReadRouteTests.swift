@@ -64,15 +64,22 @@ struct MechanicalGapReadRouteTests {
         #expect(lines.filter { $0 == call }.count == 1)
     }
 
-    @Test("state/pulse stayed in the composition root and did not follow")
-    func pulseRouteDidNotMove() throws {
-        // The order was to move gaps only. The two share helpers but not code, and this
-        // pins that the separation actually happened rather than being intended.
+    @Test("state/pulse lives in its own file, not in this one")
+    func pulseRouteIsSeparate() throws {
+        // F-F8 moved gaps only and left pulse in the composition root; F-F9 then moved
+        // pulse into a file of its own. What this test has always guarded is the same
+        // thing either way: the two share helpers but not code, and neither extraction
+        // may quietly absorb the other.
         let pulse = #"apiV1.get("state", "pulse")"#
 
-        #expect(try serverSourceText().contains(pulse))
         #expect(try routeFileText().contains(pulse) == false,
-                "The pulse route was dragged along with the gaps extraction")
+                "The pulse route was absorbed into \(routeFileName)")
+
+        let pulseSource = try #require(
+            try serverModuleSourceTexts().first { $0.name == "OperationalPulseReadRoutes.swift" }?.text,
+            "OperationalPulseReadRoutes.swift is missing from the library"
+        )
+        #expect(pulseSource.contains(pulse))
     }
 
     // MARK: Dependencies — threaded, not duplicated

@@ -550,8 +550,16 @@ struct A1bPreservationTests {
         )
         #expect(trimmedSourceLines(gapsSource)
             .filter { $0.hasPrefix("logTimestampReadExpectationDiagnostic(") }.count == 1)
+        let pulseSource = try #require(
+            try serverModuleSourceTexts().first { $0.name == "OperationalPulseReadRoutes.swift" }?.text,
+            "OperationalPulseReadRoutes.swift is missing from the library"
+        )
+        #expect(trimmedSourceLines(pulseSource)
+            .filter { $0.hasPrefix("logTimestampReadExpectationDiagnostic(") }.count == 1)
+
+        // Since F-F9 both calculations live in route files, so the composition root has
+        // no diagnostic call left at all.
         #expect(trimmedSourceLines(try serverSourceText())
-            .filter { $0.hasPrefix("logTimestampReadExpectationDiagnostic(") }.count == 1,
-                "The pulse diagnostic call left the composition root")
+            .filter { $0.hasPrefix("logTimestampReadExpectationDiagnostic(") }.count == 0)
     }
 }
