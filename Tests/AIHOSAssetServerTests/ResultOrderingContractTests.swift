@@ -62,9 +62,15 @@ private let expectedDecisionTraceOrderByClauses: [String] = [
     #"ORDER BY "created_at" ASC"#                           // GET /api/v1/assets/:id/decision-traces
 ]
 
-/// The four clauses remaining in `AIHOSAssetServer.swift`, in source order.
+/// The single clause in `ObservationRecordReadRoutes.swift`.
+///
+/// Ascending here, then re-sorted descending in Swift — see the comparator test below.
+private let expectedRecordsOrderByClauses: [String] = [
+    #"ORDER BY asset_records."captureTimestamp" ASC"#       // GET /api/v1/records
+]
+
+/// The three clauses remaining in `AIHOSAssetServer.swift`, in source order.
 private let expectedOrderByClauses: [String] = [
-    #"ORDER BY asset_records."captureTimestamp" ASC"#,      // GET /api/v1/records
     #"ORDER BY "fileName" ASC"#,                            // POST /api/v1/assets/:id/transcribe-audio
     #"ORDER BY "standardKey" ASC"#,                         // GET /api/v1/gaps/mechanical
     #"ORDER BY "standardKey" ASC"#                          // GET /api/v1/state/pulse
@@ -77,7 +83,7 @@ struct ResultOrderingContractTests {
     func orderByClausesAreExact() throws {
         let clauses = parseOrderByClauses(inSource: try serverSourceText())
 
-        #expect(clauses.count == 4, "Found \(clauses.count) ORDER BY clauses: \(clauses)")
+        #expect(clauses.count == 3, "Found \(clauses.count) ORDER BY clauses: \(clauses)")
         #expect(clauses == expectedOrderByClauses)
 
         for (file, expected) in [
@@ -86,7 +92,8 @@ struct ResultOrderingContractTests {
             ("PayloadTextReadRoutes.swift", expectedPayloadTextOrderByClauses),
             ("StandardStatusTimelineReadRoutes.swift", expectedStatusTimelineOrderByClauses),
             ("OperationalStandardReadRoutes.swift", expectedStandardsReadOrderByClauses),
-            ("ObservationDecisionTraceReadRoutes.swift", expectedDecisionTraceOrderByClauses)
+            ("ObservationDecisionTraceReadRoutes.swift", expectedDecisionTraceOrderByClauses),
+            ("ObservationRecordReadRoutes.swift", expectedRecordsOrderByClauses)
         ] {
             let source = try #require(
                 try serverModuleSourceTexts().first { $0.name == file }?.text,
@@ -111,6 +118,7 @@ struct ResultOrderingContractTests {
                 + expectedStatusTimelineOrderByClauses
                 + expectedStandardsReadOrderByClauses
                 + expectedDecisionTraceOrderByClauses
+                + expectedRecordsOrderByClauses
         ).sorted())
     }
 
@@ -126,23 +134,34 @@ struct ResultOrderingContractTests {
 
     @Test("Exactly two routes re-sort descending in Swift after an ascending SQL sort")
     func swiftComparatorsAreExact() throws {
-        let source = try serverSourceText()
-
+        // Counted across the library since F-F6 moved the records route out. The demand
+        // is unchanged: exactly two, no more and no fewer.
+        //
         // GET /api/v1/records and GET /api/v1/shift-handover/log both present newest
         // first, despite their SQL reading oldest first (or, for the handover log,
         // being unordered in SQL entirely).
-        #expect(countDescendingDateComparators(inSource: source) == 2)
+        #expect(countDescendingDateComparators(inSource: try serverModuleSourceText()) == 2)
+
+        // One each, and specifically in these two places. The library-wide count above
+        // would still pass if both comparators ended up in the same file, which would
+        // mean one route had silently lost its ordering.
+        let recordsSource = try #require(
+            try serverModuleSourceTexts().first { $0.name == "ObservationRecordReadRoutes.swift" }?.text,
+            "ObservationRecordReadRoutes.swift is missing from the library"
+        )
+        #expect(countDescendingDateComparators(inSource: recordsSource) == 1)
+        #expect(countDescendingDateComparators(inSource: try serverSourceText()) == 1,
+                "The shift-handover comparator left the composition root")
     }
 
     @Test("The shift-handover query is the one read with no SQL ordering at all")
     func handoverLogHasNoSQLOrdering() throws {
-        let source = try serverSourceText()
-        let clauses = parseOrderByClauses(inSource: source)
+        let clauses = parseOrderByClauses(inSource: try serverModuleSourceText())
 
         // Its ordering exists only in the Swift comparator. Pinned because moving that
         // route without the comparator would silently return database-arbitrary order.
         #expect(clauses.contains { $0.contains("eventTimestamp") } == false)
-        #expect(countDescendingDateComparators(inSource: source) == 2)
+        #expect(countDescendingDateComparators(inSource: try serverModuleSourceText()) == 2)
     }
 
     // MARK: Negative controls

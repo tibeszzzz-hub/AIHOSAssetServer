@@ -503,7 +503,9 @@ struct A1bPreservationTests {
 
     @Test("The read routes keep their queries and ordering")
     func readRoutesUnchanged() throws {
-        let source = try serverSourceText()
+        // Whole library since F-F6 moved the records route into its own file; both
+        // demands are unchanged.
+        let source = try serverModuleSourceText()
 
         #expect(source.contains(#"ORDER BY asset_records."captureTimestamp" ASC"#))
         #expect(countDescendingDateComparators(inSource: source) == 2)
