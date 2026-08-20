@@ -1131,65 +1131,7 @@ public struct AIHOSAssetServer {
 
         registerNightPhotoStandardRoutes(on: apiV1)
 
-        apiV1.post("decisions") { req async throws -> Response in
-            guard let sql = req.db as? SQLDatabase else {
-                return Response(status: .internalServerError)
-            }
-
-            let payload: DecisionPayload
-
-            do {
-                payload = try req.content.decode(DecisionPayload.self)
-            } catch {
-                print("Decision payload decode failed: \(error)")
-                return Response(status: .badRequest)
-            }
-
-            guard payload.decisionType == "leave_empty" else {
-                print("Decision rejected: unsupported decisionType \(payload.decisionType)")
-                return Response(status: .badRequest)
-            }
-
-            let decisionID = UUID()
-            let createdAt = ISO8601DateFormatter().string(from: Date())
-            let sourceTag = "[M]"
-            let inheritedLaneKey = "unassigned"
-
-            do {
-                try await sql.raw("""
-                    INSERT INTO decision_traces
-                    (id, "standard_key", "expected_window_start", "expected_window_end", "decision_type", "source_tag", "created_at", lane_key)
-                    VALUES
-                    (\(bind: decisionID), \(bind: payload.standardKey), \(bind: payload.expectedWindowStart), \(bind: payload.expectedWindowEnd), \(bind: payload.decisionType), \(bind: sourceTag), \(bind: createdAt), \(bind: inheritedLaneKey));
-                """).run()
-            } catch {
-                print("Decision Trace INSERT failed: \(error)")
-                return Response(status: .internalServerError)
-            }
-
-            print("Decision Trace fixation PASS")
-            print("decisionID: \(decisionID.uuidString)")
-            print("standardKey: \(payload.standardKey)")
-            print("expectedWindowStart: \(payload.expectedWindowStart)")
-            print("expectedWindowEnd: \(payload.expectedWindowEnd)")
-            print("decisionType: \(payload.decisionType)")
-            print("sourceTag: \(sourceTag)")
-            print("createdAt: \(createdAt)")
-            print("laneKey: \(inheritedLaneKey)")
-
-            let response = Response(status: .ok)
-            try response.content.encode([
-                "id": decisionID.uuidString,
-                "sourceTag": sourceTag,
-                "decisionType": payload.decisionType,
-                "standardKey": payload.standardKey,
-                "expectedWindowStart": payload.expectedWindowStart,
-                "expectedWindowEnd": payload.expectedWindowEnd,
-                "createdAt": createdAt,
-                "laneKey": inheritedLaneKey
-            ])
-            return response
-        }
+        registerDecisionTraceFixationRoutes(on: apiV1)
 
         registerMechanicalGapReadRoutes(on: apiV1, operationsTimeZone: operationsTimeZone)
 
