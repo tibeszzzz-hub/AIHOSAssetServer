@@ -79,13 +79,17 @@ private let expectedPulseOrderByClauses: [String] = [
     #"ORDER BY "standardKey" ASC"#                          // GET /api/v1/state/pulse
 ]
 
-/// The one clause remaining in `AIHOSAssetServer.swift`.
-///
-/// With F-F9 every read route has left the composition root, so the only ordering
-/// still declared there belongs to a write path.
-private let expectedOrderByClauses: [String] = [
+/// The single clause in `VoiceTranscriptionRoutes.swift`.
+private let expectedTranscriptionOrderByClauses: [String] = [
     #"ORDER BY "fileName" ASC"#                             // POST /api/v1/assets/:id/transcribe-audio
 ]
+
+/// What remains in `AIHOSAssetServer.swift`: nothing.
+///
+/// F-G10 moved the last route that ordered anything, so the composition root now
+/// declares no ordering at all. Asserted rather than assumed — a clause reappearing
+/// there would mean a route was registered in main() instead of a route file.
+private let expectedOrderByClauses: [String] = []
 
 @Suite("Result ordering contracts")
 struct ResultOrderingContractTests {
@@ -94,7 +98,7 @@ struct ResultOrderingContractTests {
     func orderByClausesAreExact() throws {
         let clauses = parseOrderByClauses(inSource: try serverSourceText())
 
-        #expect(clauses.count == 1, "Found \(clauses.count) ORDER BY clauses: \(clauses)")
+        #expect(clauses.isEmpty, "Found \(clauses.count) ORDER BY clauses: \(clauses)")
         #expect(clauses == expectedOrderByClauses)
 
         for (file, expected) in [
@@ -106,7 +110,8 @@ struct ResultOrderingContractTests {
             ("ObservationDecisionTraceReadRoutes.swift", expectedDecisionTraceOrderByClauses),
             ("ObservationRecordReadRoutes.swift", expectedRecordsOrderByClauses),
             ("MechanicalGapReadRoutes.swift", expectedGapsOrderByClauses),
-            ("OperationalPulseReadRoutes.swift", expectedPulseOrderByClauses)
+            ("OperationalPulseReadRoutes.swift", expectedPulseOrderByClauses),
+            ("VoiceTranscriptionRoutes.swift", expectedTranscriptionOrderByClauses)
         ] {
             let source = try #require(
                 try serverModuleSourceTexts().first { $0.name == file }?.text,
@@ -134,6 +139,7 @@ struct ResultOrderingContractTests {
                 + expectedRecordsOrderByClauses
                 + expectedGapsOrderByClauses
                 + expectedPulseOrderByClauses
+                + expectedTranscriptionOrderByClauses
         ).sorted())
     }
 
