@@ -53,7 +53,10 @@ struct CanonicalCaptureTimestampTests {
 
     @Test("Both ingest routes enforce the contract before any write")
     func ingestGuardsPrecedeAnyWrite() throws {
-        let lines = trimmedSourceLines(try serverSourceText())
+        // Whole library since F-H1 moved /audio into its own file. Both routes are
+        // still scanned, and each is still checked against its OWN guard, file write
+        // and transaction — the per-route scan below starts at that route's line.
+        let lines = trimmedSourceLines(try serverModuleSourceText())
 
         #expect(lines.filter { $0.contains("isCanonicalCaptureTimestamp(metadata.captureTimestamp)") }.count == 2,
                 "Expected one ingest guard in /sync and one in /audio")

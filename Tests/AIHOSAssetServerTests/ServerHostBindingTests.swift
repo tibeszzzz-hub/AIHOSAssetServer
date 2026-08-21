@@ -168,10 +168,11 @@ struct RemoteAccessAbsenceTests {
         // Without this control a zero result below could just as well mean the scan
         // looked at the wrong directory, or at nothing at all. Since F-B that means
         // both production targets: the library and the runner.
-        #expect(sources.count == 32, "Production sources found: \(sources.map(\.name))")
+        #expect(sources.count == 33, "Production sources found: \(sources.map(\.name))")
         #expect(sources.map(\.name) == [
             "AIHOSAssetServer.swift",
             "APIContentDTOs.swift",
+            "AudioIngestionRoutes.swift",
             "DatabaseHealthRoutes.swift",
             "DecisionTraceFixationRoutes.swift",
             "FileDeliveryRoutes.swift",

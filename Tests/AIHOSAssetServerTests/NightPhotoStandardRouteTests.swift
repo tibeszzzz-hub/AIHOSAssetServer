@@ -62,20 +62,23 @@ struct NightPhotoStandardRouteTests {
         #expect(lines.filter { $0 == call }.count == 1)
     }
 
-    @Test("Ingestion stayed in the composition root and was not touched")
-    func ingestionDidNotMove() throws {
-        // Ingestion is explicitly last in the extraction order. Pinned so a write
-        // extraction cannot drift into it.
-        let source = try serverSourceText()
+    @Test("No ingestion route was ever absorbed into this file")
+    func ingestionDidNotMoveHere() throws {
+        // Ingestion is explicitly last in the extraction order. F-H1 moved /audio into
+        // its own file; /sync is still in the composition root. What this test has
+        // always guarded is unchanged: no ingestion route may end up here.
         let routeFile = try routeFileText()
 
         for ingestion in [
             #"apiV1.on(.POST, "sync""#,
             #"apiV1.on(.POST, "audio""#
         ] {
-            #expect(source.contains(ingestion), "Ingestion route left the composition root: \(ingestion)")
-            #expect(routeFile.contains(ingestion) == false)
+            #expect(routeFile.contains(ingestion) == false,
+                    "Ingestion route appeared in \(routeFileName): \(ingestion)")
         }
+
+        #expect(try serverSourceText().contains(#"apiV1.on(.POST, "sync""#),
+                "/sync left the composition root out of order")
     }
 
     // MARK: Dependencies
