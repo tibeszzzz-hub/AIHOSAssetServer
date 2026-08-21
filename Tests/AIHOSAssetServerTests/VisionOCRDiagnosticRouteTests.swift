@@ -98,11 +98,37 @@ struct VisionOCRDiagnosticRouteTests {
         #expect(code.contains("let verifier = AppleVisionOCRVerifier()"))
         #expect(code.contains("outcome = try await verifier.recognizeText(in: testFileURL)"))
 
-        // And the decision is still made once, in the composition root.
-        let main = try serverSourceText()
-        #expect(main.contains("#if canImport(Vision)"))
-        #expect(main.components(separatedBy: "actor AppleVisionOCRVerifier").count - 1 == 2,
+        // And the decision is still made exactly once — in VisionTextRecognition.swift
+        // since F-I1, and no longer in the composition root. The demand is unchanged:
+        // one file declares the conditional and both implementations, and no other file
+        // may declare either.
+        let adapter = try #require(
+            try serverModuleSourceTexts().first { $0.name == "VisionTextRecognition.swift" }?.text,
+            "VisionTextRecognition.swift is missing from the library"
+        )
+        #expect(adapter.contains("#if canImport(Vision)"))
+        #expect(adapter.components(separatedBy: "actor AppleVisionOCRVerifier").count - 1 == 2,
                 "The two platform implementations of the verifier are no longer both present")
+
+        // Library-wide, one file and one file only decides. The adapter carries two
+        // conditionals — one guarding the import, one guarding the implementations —
+        // exactly as it did when this lived in the composition root.
+        #expect(adapter.components(separatedBy: "#if canImport(Vision)").count - 1 == 2)
+
+        let othersWithVisionConditional = try serverModuleSourceTexts()
+            .filter { $0.name != "VisionTextRecognition.swift" }
+            .filter { file in
+                file.text
+                    .split(separator: "\n", omittingEmptySubsequences: false)
+                    .map(String.init)
+                    .contains { $0.trimmingCharacters(in: .whitespaces).hasPrefix("#if canImport(Vision)") }
+            }
+            .map(\.name)
+        #expect(othersWithVisionConditional.isEmpty,
+                "Vision is decided in more than one place: \(othersWithVisionConditional)")
+
+        #expect(try serverModuleSourceText()
+            .components(separatedBy: "actor AppleVisionOCRVerifier").count - 1 == 2)
     }
 
     // MARK: The threaded dependency and the file it writes

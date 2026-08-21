@@ -7,10 +7,6 @@ import Foundation
 import Speech
 #endif
 
-#if canImport(Vision)
-import Vision
-#endif
-
 #if canImport(Speech)
 actor AppleSpeechTranscriber {
     enum TranscriptionOutcome {
@@ -105,50 +101,6 @@ actor AppleSpeechTranscriber {
 
     func transcribeAudioFile(at fileURL: URL, localeIdentifier: String = "en-US") async throws -> TranscriptionOutcome {
         return .null(reason: "Apple Speech is unavailable on this server runtime")
-    }
-}
-#endif
-
-#if canImport(Vision)
-
-actor AppleVisionOCRVerifier {
-    enum OCROutcome {
-        case text(String)
-        case null(reason: String)
-    }
-
-    func recognizeText(in imageURL: URL) async throws -> OCROutcome {
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = false
-
-        let requestHandler = VNImageRequestHandler(url: imageURL)
-        try requestHandler.perform([request])
-
-        let observations = request.results ?? []
-        let recognizedLines = observations.compactMap { observation in
-            observation.topCandidates(1).first?.string
-        }
-
-        let rawText = recognizedLines.joined(separator: "\n")
-        let trimmedRawText = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard !trimmedRawText.isEmpty else {
-            return .null(reason: "Apple Vision OCR returned no readable text")
-        }
-
-        return .text(rawText)
-    }
-}
-#else
-actor AppleVisionOCRVerifier {
-    enum OCROutcome {
-        case text(String)
-        case null(reason: String)
-    }
-
-    func recognizeText(in imageURL: URL) async throws -> OCROutcome {
-        return .null(reason: "Apple Vision OCR is unavailable on this server runtime")
     }
 }
 #endif
