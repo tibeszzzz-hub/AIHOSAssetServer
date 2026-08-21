@@ -63,14 +63,21 @@ struct AudioIngestionRouteTests {
         #expect(lines.filter { $0 == call }.count == 1)
     }
 
-    @Test("/sync stayed in the composition root and was not dragged along")
-    func syncDidNotMove() throws {
+    @Test("/sync lives in its own file, not in this one")
+    func syncIsSeparate() throws {
+        // F-H1 moved /audio and left /sync in the composition root; F-H2 then moved
+        // /sync into a file of its own. What this guards is unchanged: the two ingest
+        // paths use different payload types and neither may absorb the other.
         let sync = #"apiV1.on(.POST, "sync""#
 
-        #expect(try serverSourceText().contains(sync),
-                "/sync left the composition root out of order")
         #expect(try routeFileText().contains(sync) == false,
                 "/sync was absorbed into \(routeFileName)")
+
+        let syncSource = try #require(
+            try serverModuleSourceTexts().first { $0.name == "ImageSyncIngestionRoutes.swift" }?.text,
+            "ImageSyncIngestionRoutes.swift is missing from the library"
+        )
+        #expect(syncSource.contains(sync))
 
         // The two ingest paths use different payload types and must not be merged.
         let code = try routeFileCodeLines().joined(separator: "\n")

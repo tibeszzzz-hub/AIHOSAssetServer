@@ -62,7 +62,7 @@ struct OperationalStandardStatusRouteTests {
         #expect(lines.filter { $0 == call }.count == 1)
     }
 
-    @Test("Only the /sync ingestion route remains in the composition root")
+    @Test("The composition root registers no routes at all")
     func remainingRegistrationsArePinned() throws {
         // Uses the manifest parser rather than a hand-rolled scan, so migration
         // registrations and other lines that merely resemble route calls cannot be
@@ -71,10 +71,10 @@ struct OperationalStandardStatusRouteTests {
             .compactMap(\.signature)
             .sorted()
 
-        // Since F-H1 only /sync is left, and it is deliberately the very last
-        // extraction in the whole series.
-        #expect(remaining == ["POST /api/v1/sync"],
-                "Registrations left in main(): \(remaining)")
+        // F-H2 moved the last one. main() now resolves configuration, runs migrations
+        // and calls registrars — it registers nothing itself. Asserted rather than
+        // assumed: a route added straight into the composition root fails here.
+        #expect(remaining.isEmpty, "Registrations left in main(): \(remaining)")
     }
 
     // MARK: Dependencies

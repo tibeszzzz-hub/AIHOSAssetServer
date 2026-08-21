@@ -77,8 +77,13 @@ struct NightPhotoStandardRouteTests {
                     "Ingestion route appeared in \(routeFileName): \(ingestion)")
         }
 
-        #expect(try serverSourceText().contains(#"apiV1.on(.POST, "sync""#),
-                "/sync left the composition root out of order")
+        // Both ingest routes now live in their own files (F-H1, F-H2). The guard above
+        // is the part that still matters here: neither may end up in this file.
+        let syncSource = try #require(
+            try serverModuleSourceTexts().first { $0.name == "ImageSyncIngestionRoutes.swift" }?.text,
+            "ImageSyncIngestionRoutes.swift is missing from the library"
+        )
+        #expect(syncSource.contains(#"apiV1.on(.POST, "sync""#))
     }
 
     // MARK: Dependencies
