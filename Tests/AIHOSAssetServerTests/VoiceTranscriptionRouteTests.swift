@@ -79,12 +79,28 @@ struct VoiceTranscriptionRouteTests {
         #expect(code.contains("let transcriber = AppleSpeechTranscriber()"))
         #expect(code.contains("outcome = try await transcriber.transcribeAudioFile(at: fileURL)"))
 
-        // The decision is still made once, in the composition root, with both
-        // implementations present.
-        let main = try serverSourceText()
-        #expect(main.contains("#if canImport(Speech)"))
-        #expect(main.components(separatedBy: "actor AppleSpeechTranscriber").count - 1 == 2,
+        // The decision is still made exactly once — in SpeechTranscription.swift since
+        // F-I2, and no longer in the composition root. The demand is unchanged: one file
+        // declares the conditional and both implementations, and no other file may.
+        let adapter = try #require(
+            try serverModuleSourceTexts().first { $0.name == "SpeechTranscription.swift" }?.text,
+            "SpeechTranscription.swift is missing from the library"
+        )
+        #expect(adapter.contains("#if canImport(Speech)"))
+        #expect(adapter.components(separatedBy: "actor AppleSpeechTranscriber").count - 1 == 2,
                 "The two platform implementations of the transcriber are no longer both present")
+
+        let othersWithSpeechConditional = try serverModuleSourceTexts()
+            .filter { $0.name != "SpeechTranscription.swift" }
+            .filter { file in
+                file.text
+                    .split(separator: "\n", omittingEmptySubsequences: false)
+                    .map(String.init)
+                    .contains { $0.trimmingCharacters(in: .whitespaces).hasPrefix("#if canImport(Speech)") }
+            }
+            .map(\.name)
+        #expect(othersWithSpeechConditional.isEmpty,
+                "Speech is decided in more than one place: \(othersWithSpeechConditional)")
     }
 
     // MARK: Dependencies

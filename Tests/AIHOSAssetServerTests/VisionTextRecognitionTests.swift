@@ -79,14 +79,32 @@ struct VisionTextRecognitionTests {
         }
     }
 
-    @Test("The Speech adapter has not been touched")
-    func speechAdapterIsUnaffected() throws {
-        // F-I1 moved Vision only. Speech is a separate atom precisely so the two
-        // platform conditionals cannot break together.
-        let main = try serverSourceText()
+    @Test("The Speech adapter is a separate file, decided in its own single place")
+    func speechAdapterIsSeparate() throws {
+        // F-I1 moved Vision only; F-I2 then moved Speech into a file of its own. They
+        // were split into two atoms precisely so the two platform conditionals could
+        // never break together — and that separation is what this now asserts.
+        let speech = try #require(
+            try serverModuleSourceTexts().first { $0.name == "SpeechTranscription.swift" }?.text,
+            "SpeechTranscription.swift is missing from the library"
+        )
+        #expect(speech.contains("#if canImport(Speech)"))
+        #expect(speech.components(separatedBy: "actor AppleSpeechTranscriber").count - 1 == 2)
 
-        #expect(main.contains("#if canImport(Speech)"))
-        #expect(main.components(separatedBy: "actor AppleSpeechTranscriber").count - 1 == 2)
+        let vision = try #require(
+            try serverModuleSourceTexts().first { $0.name == "VisionTextRecognition.swift" }?.text,
+            "VisionTextRecognition.swift is missing from the library"
+        )
+        // Code only: each adapter's header comment cross-references the other by name,
+        // which is documentation rather than a dependency.
+        func codeOf(_ text: String) -> String {
+            text.split(separator: "\n", omittingEmptySubsequences: false)
+                .map(String.init)
+                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+                .joined(separator: "\n")
+        }
+        #expect(codeOf(vision).contains("Speech") == false, "The two adapters were merged")
+        #expect(codeOf(speech).contains("Vision") == false, "The two adapters were merged")
     }
 
     @Test("Negative control: the pinning can fail")

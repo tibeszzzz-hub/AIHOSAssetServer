@@ -11,7 +11,7 @@ import Foundation
 // enters the observation record.
 //
 // WHY THIS FILE CARRIES NO #if canImport(Vision)
-//   The conditional lives with `AppleVisionOCRVerifier` in AIHOSAssetServer.swift,
+//   The conditional lives with `AppleVisionOCRVerifier` in VisionTextRecognition.swift,
 //   which declares two implementations of the same actor — one backed by Vision and one
 //   that always answers "unavailable on this server runtime". The route calls the actor
 //   by name and never asks which it got, so it compiles and behaves identically on both

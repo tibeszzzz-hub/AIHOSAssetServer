@@ -11,7 +11,7 @@ import Foundation
 // alongside it, tagged [S] because the system produced it rather than a person.
 //
 // WHY THIS FILE CARRIES NO #if canImport(Speech)
-//   The conditional lives with `AppleSpeechTranscriber` in AIHOSAssetServer.swift,
+//   The conditional lives with `AppleSpeechTranscriber` in SpeechTranscription.swift,
 //   which declares two implementations of the same actor — one backed by Speech and one
 //   that answers "unavailable on this server runtime". This route calls the actor by
 //   name and never asks which it got, so it behaves identically on both platforms
