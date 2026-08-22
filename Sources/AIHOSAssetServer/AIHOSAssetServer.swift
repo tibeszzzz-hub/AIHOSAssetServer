@@ -157,9 +157,9 @@ public struct AIHOSAssetServer {
 
         registerDecisionTraceFixationRoutes(on: apiV1)
 
-        registerMechanicalGapReadRoutes(on: apiV1, operationsTimeZone: operationsTimeZone)
+        registerMechanicalGapReadRoutes(on: apiV1, operationsTimeZone: operationsTimeZone, storageDirectory: storageDirectory)
 
-        registerOperationalPulseReadRoutes(on: apiV1, operationsTimeZone: operationsTimeZone)
+        registerOperationalPulseReadRoutes(on: apiV1, operationsTimeZone: operationsTimeZone, storageDirectory: storageDirectory)
 
         // Fail-closed coverage check: refuse to start if any route was registered
         // outside the central gate without an explicit unauthenticated classification.

@@ -371,24 +371,40 @@ struct ObservationCountingTests {
         #expect(bounds.startEpoch.count == 10)
     }
 
-    @Test("The counting SQL is a half-open text range with a shape guard and no cast")
+    @Test("The window SQL is a half-open text range with a shape guard and no cast")
     func sqlUsesTheHalfOpenRange() throws {
-        // Whole library since F-E2 moved the window helpers into their own file.
+        // Whole library since F-E2 moved the window helpers into their own file. Atom A
+        // replaced the bare COUNT(*) with a lane-scoped per-artefact read; every
+        // property the count query was pinned for is still pinned below, and the lane
+        // predicate is pinned on top of them.
         let body = try #require(declarationBody(
-            startingWithLinePrefix: "func observationCountInWindowQuery(",
+            startingWithLinePrefix: "func laneScopedObservationEvidenceQuery(",
             inSource: try serverModuleSourceText()
         ))
         let sql = body.joined(separator: "\n")
 
-        #expect(sql.contains(#"COUNT(*) AS "recordCount""#))
         #expect(sql.contains("FROM asset_records"))
         #expect(sql.contains(#""captureTimestamp" ~ '^[0-9]{10}$'"#))
         #expect(sql.contains(#""captureTimestamp" >= \(bind: bounds.startEpoch)"#))
         #expect(sql.contains(#""captureTimestamp" < \(bind: bounds.endEpoch)"#))
 
+        // Atom A A-AC4: the lane predicate is what stops one lane closing another's
+        // expectation, and it is bound rather than interpolated (A-AC security rule).
+        #expect(sql.contains(#"WHERE asset_records.lane_key = \(bind: laneKey)"#))
+
+        // Atom A A-AC5: LEFT, not INNER. An INNER join would drop exactly the records
+        // that carry no registered form, which is a distinct outcome that must stay
+        // visible rather than being reported as a cleaner day than the data supports.
+        #expect(sql.contains("LEFT JOIN asset_files"))
+        #expect(sql.contains("INNER JOIN") == false)
+
         // AC-3: no cast, and no leftover ISO predicate in the product calculation.
         #expect(sql.uppercased().contains("CAST") == false)
         #expect(sql.contains("[0-9]{4}") == false)
+
+        // Result ordering is a per-file client contract; a counting helper must not
+        // acquire one of its own.
+        #expect(sql.uppercased().contains("ORDER BY") == false)
     }
 
     @Test("There is exactly one window helper, used by both calculations")
@@ -397,13 +413,17 @@ struct ObservationCountingTests {
         // across the library. The point is unchanged: one helper, used twice.
         let lines = trimmedSourceLines(try serverModuleSourceText())
 
-        let helperDeclarations = lines.filter { $0.hasPrefix("func observationCountInWindowQuery(") }
-        let callSites = lines.filter { $0.contains("observationCountInWindowQuery(bounds:") && $0.contains("sql.raw") }
+        let helperDeclarations = lines.filter { $0.hasPrefix("func laneScopedObservationEvidenceQuery(") }
+        let callSites = lines.filter { $0.contains("laneScopedObservationEvidenceQuery(bounds:") && $0.contains("sql.raw") }
         let boundsCallSites = lines.filter { $0.hasPrefix("guard let windowBounds = observationWindowBounds(") }
 
         #expect(helperDeclarations.count == 1)
         #expect(callSites.count == 2, "gaps and pulse must share the one helper")
         #expect(boundsCallSites.count == 2)
+
+        // The replaced helper must be gone rather than left behind unused: a second
+        // window helper is exactly how the two calculations start to disagree.
+        #expect(lines.contains { $0.contains("observationCountInWindowQuery") } == false)
 
         // The old duplicated window SQL must be gone from both calculations.
         #expect(lines.contains { $0.contains(#"CAST(SUBSTRING("captureTimestamp""#) } == false)

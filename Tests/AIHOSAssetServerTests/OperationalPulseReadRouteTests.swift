@@ -59,7 +59,7 @@ struct OperationalPulseReadRouteTests {
 
     @Test("main() reaches the route only through the registrar, exactly once")
     func compositionRootCallsTheRegistrarOnce() throws {
-        let call = "registerOperationalPulseReadRoutes(on: apiV1, operationsTimeZone: operationsTimeZone)"
+        let call = "registerOperationalPulseReadRoutes(on: apiV1, operationsTimeZone: operationsTimeZone, storageDirectory: storageDirectory)"
         let lines = trimmedSourceLines(try serverSourceText())
 
         #expect(lines.filter { $0 == call }.count == 1)
@@ -78,11 +78,18 @@ struct OperationalPulseReadRouteTests {
 
     // MARK: Dependencies — threaded, not duplicated
 
-    @Test("The time zone is a parameter and every other helper is reused")
+    @Test("Both values are parameters and every other helper is reused")
     func dependenciesAreThreadedNotDuplicated() throws {
-        #expect(try routeFileText().contains(
-            "func registerOperationalPulseReadRoutes(on apiV1: MachineGatedRoutes, operationsTimeZone: TimeZone) {"
-        ))
+        // Atom A added `storageDirectory`. Pulse now asks the same evidence question as
+        // gaps, and that question is answered against the filesystem.
+        for parameter in [
+            "func registerOperationalPulseReadRoutes(",
+            "on apiV1: MachineGatedRoutes,",
+            "operationsTimeZone: TimeZone,",
+            "storageDirectory: String"
+        ] {
+            #expect(try routeFileText().contains(parameter), "Registrar signature changed: \(parameter)")
+        }
 
         let codeLines = try routeFileCodeLines()
         let code = codeLines.joined(separator: "\n")
@@ -95,8 +102,11 @@ struct OperationalPulseReadRouteTests {
             "operationsDateString(for: Date(), in: operationsTimeZone)",
             "iso8601Timestamp(dateString: pulseDate, hour: endHour)",
             "isStandardActive(",
+            "standardCreatedAtIsDeclared(createdAt)",
+            "standardStatusDecisionCountQuery(standardID: standardID, at: evaluationTimestamp)",
             "observationWindowBounds(",
-            "observationCountInWindowQuery(bounds: windowBounds)",
+            "laneScopedObservationEvidenceQuery(bounds: windowBounds, laneKey: laneKey)",
+            "observationEvidenceTally(",
             "leaveEmptyDecisionCountQuery(",
             "timestampReadExpectationDiagnosticQuery()",
             "logTimestampReadExpectationDiagnostic("
@@ -106,9 +116,29 @@ struct OperationalPulseReadRouteTests {
 
         #expect(codeLines.contains { $0.hasPrefix("func ") && $0.contains("register") == false } == false,
                 "A helper was redefined inside \(routeFileName)")
-        for declaration in ["var ", "let ", "struct "] {
+        for declaration in ["var ", "let ", "struct ", "enum "] {
             #expect(codeLines.contains { $0.hasPrefix(declaration) } == false,
                     "File-scope `\(declaration.trimmingCharacters(in: .whitespaces))` in \(routeFileName)")
+        }
+    }
+
+    @Test("Pulse and gaps share the evidence rule rather than each carrying one")
+    func pulseSharesTheEvidenceRuleWithGaps() throws {
+        // The two calculations answer different questions, but "did this observation
+        // actually happen" must not be one of the differences. A second copy of that
+        // rule is how the board and the list start disagreeing about the same day.
+        let gapsSource = try #require(
+            try serverModuleSourceTexts().first { $0.name == "MechanicalGapReadRoutes.swift" }?.text,
+            "MechanicalGapReadRoutes.swift is missing from the library"
+        )
+
+        for shared in [
+            "laneScopedObservationEvidenceQuery(bounds: windowBounds, laneKey: laneKey)",
+            "standardCreatedAtIsDeclared(createdAt)",
+            "observationEvidenceTally("
+        ] {
+            #expect(try routeFileText().contains(shared), "Pulse stopped using the shared rule: \(shared)")
+            #expect(gapsSource.contains(shared), "Gaps stopped using the shared rule: \(shared)")
         }
     }
 
@@ -128,20 +158,22 @@ struct OperationalPulseReadRouteTests {
         #expect(code.contains(".badRequest") == false, "Pulse gained a 400 path it has no input for")
     }
 
-    @Test("Inactive standards are excluded from the active count before it is used")
+    @Test("Decided-inactive standards are excluded from the active count before it is used")
     func inactiveStandardsAreNotCounted() throws {
         let code = try routeFileCodeLines().joined(separator: "\n")
 
-        #expect(code.contains("guard standardWasActive else {"))
+        #expect(code.contains("guard activationResolved, standardWasActive else {"))
         #expect(code.contains(
             #"print("Historical status resolution: standard inactive at pulse evaluation time — skipping \(standardKey)")"#
         ))
 
-        // The increment must come after the guard. Counting first would make blue
-        // unreachable and turn "nothing active" into "nothing checked".
-        let guardIndex = try #require(code.range(of: "guard standardWasActive else {")?.lowerBound)
-        let incrementIndex = try #require(code.range(of: "activeStandardsCount += 1")?.lowerBound)
-        #expect(guardIndex < incrementIndex,
+        // The unconditional increment must come after the guard. Counting every standard
+        // first would make blue unreachable and turn "nothing active" into "nothing
+        // checked". The unresolved branch inside the guard increments too, and that is
+        // the subject of its own test below.
+        let guardIndex = try #require(code.range(of: "guard activationResolved, standardWasActive else {")?.lowerBound)
+        let unconditionalIndex = try #require(code.range(of: "\n            activeStandardsCount += 1\n")?.lowerBound)
+        #expect(guardIndex < unconditionalIndex,
                 "activeStandardsCount is incremented before the inactive standards are skipped")
 
         // Same fail-closed window rule as gaps, with its own calculation label.
@@ -151,11 +183,68 @@ struct OperationalPulseReadRouteTests {
         #expect(code.components(separatedBy: "continue").count - 1 == 2)
     }
 
+    @Test("An unresolved activation counts as active AND as a gap, so it cannot wash to blue")
+    func unresolvedActivationCannotProduceBlue() throws {
+        let code = try routeFileCodeLines().joined(separator: "\n")
+
+        // A-AC9. A legacy-sentinel standard used to fall through the inactive skip and
+        // leave both counters untouched, which is what let the board report "nothing
+        // active" while every one of those standards was unexamined.
+        #expect(code.contains("if !governanceFieldsDeclared {"))
+        #expect(code.contains("activationResolved = statusDecisionCount > 0"))
+
+        let announcement = "Standard activation unresolved at pulse evaluation time"
+        let printIndex = try #require(code.range(of: announcement)?.lowerBound)
+        let branch = String(code[..<printIndex].suffix(240))
+
+        #expect(branch.contains("activeStandardsCount += 1"),
+                "The unresolved branch does not count the standard as active")
+        #expect(branch.contains("informationGapsCount += 1"),
+                "The unresolved branch does not count the standard as a gap")
+    }
+
+    @Test("An unresolvable window counts as a gap rather than contributing to green")
+    func unresolvableWindowCannotProduceGreen() throws {
+        let code = try routeFileCodeLines().joined(separator: "\n")
+
+        // Before Atom A this branch touched neither counter, so a configuration fault
+        // was indistinguishable from a standard that had been met.
+        let warningIndex = try #require(code.range(of: "Unresolvable observation window, standard skipped")?.upperBound)
+        let tail = String(code[warningIndex...])
+        let gapIndex = try #require(tail.range(of: "informationGapsCount += 1")?.lowerBound)
+        let continueIndex = try #require(tail.range(of: "continue")?.lowerBound)
+
+        #expect(gapIndex < continueIndex, "The unresolvable-window branch leaves without counting a gap")
+    }
+
+    @Test("Pulse declares that it matched no track, on every call")
+    func trackLimitationIsDeclared() throws {
+        let code = try routeFileCodeLines().joined(separator: "\n")
+
+        // A-AC9: pulse may never be read as evidence about a particular lane or track.
+        #expect(code.contains(#"print("trackEvaluable: false")"#))
+        #expect(code.contains("track_type") == false,
+                "Pulse reads track_type, which it cannot yet match against anything")
+    }
+
+    @Test("Pulse counts each standard against its own lane")
+    func pulseCountsWithinTheStandardsLane() throws {
+        let code = try routeFileCodeLines().joined(separator: "\n")
+
+        // A-AC4: no other lane may close this standard's expectation.
+        #expect(code.contains(#"let laneKey = try standard.decode(column: "lane_key", as: String.self)"#))
+        #expect(code.contains("laneScopedObservationEvidenceQuery(bounds: windowBounds, laneKey: laneKey)"))
+
+        // Pulse takes no lane parameter of its own: it reports the whole day.
+        #expect(code.contains(#"req.query[String.self, at: "laneKey"]"#) == false,
+                "Pulse gained a lane parameter, which is the gaps contract, not this one")
+    }
+
     @Test("Both gap outcomes are logged, not just the counted one")
     func bothGapOutcomesAreReported() throws {
         let code = try routeFileCodeLines().joined(separator: "\n")
 
-        #expect(code.contains("if observedCount < requiredCount {"))
+        #expect(code.contains("if evidence.observedCount < requiredCount {"))
         #expect(code.contains("if decisionCount == 0 {"))
         #expect(code.contains("informationGapsCount += 1"))
         #expect(code.contains(#"print("Open gap without Decision Trace: \(standardKey)")"#))

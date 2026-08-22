@@ -5,33 +5,63 @@ import Foundation
 
 // MARK: - Mechanical gap detection read route
 //
-// F-F8. Reports operational standards whose expected observation did not arrive, for a
-// given operations day. `GET /api/v1/state/pulse` deliberately stays in the composition
-// root for now; the two share helpers but not code, so this file holds the gaps read
-// only and is named accordingly.
+// F-F8, extended by Atom A (WFOS-20260822-PSKS-004). `GET /api/v1/gaps/mechanical`
+// reports what is known about every operational standard for a given operations day.
+//
+// WHAT CHANGED IN ATOM A, AND WHY IT IS NOT COSMETIC
+//   The route used to return only the standards it had decided were failing. Everything
+//   else — a standard skipped as inactive, a standard whose window could not be
+//   resolved, a standard that was met — left no trace in the response at all. A client
+//   receiving a short list could not tell "these three are missing and the rest are
+//   fine" from "these three are missing and four more were never checked". Silence read
+//   as health.
+//
+//   Now every standard the route processes leaves exactly one entry, carrying its own
+//   status. Silence is no longer an answer the route can give.
+//
+//   Counting changed for the same reason. It used to be `COUNT(*)` over every record in
+//   the window regardless of lane, and regardless of whether the payload behind the
+//   record still existed. A recording in the bar could therefore close a kitchen
+//   expectation, and a record whose file had vanished from storage still counted as a
+//   fulfilled observation. Counting is now scoped to the standard's own lane, counts
+//   each record once however many artefacts it carries, and requires the evidence to be
+//   readable — with the records it could not verify reported separately rather than
+//   folded into either answer.
+//
+// WHAT THIS ROUTE STILL CANNOT DO, AND SAYS SO
+//   It cannot match a standard's track type against the records it counts. No relation
+//   registers the form of an asset record, so the only available signal is a
+//   client-supplied file name, which is unvalidated and may be absent or wrong. Rather
+//   than guess, every entry carries `trackEvaluable: "false"`, and a standard whose own
+//   `track_type` was never declared is reported as Unknown rather than measured.
 //
 // WHAT IS THREADED IN AND WHY
-//   `operationsTimeZone` is the only value this route needs from main(). It is resolved
-//   there once, fail-closed, and passed in rather than resolved again: two lookups
-//   could disagree, and this one decides which day a hotel is asking about. Everything
-//   else it uses is already module-level — the window helpers (F-E2), the operations
-//   time helpers (F-E1), the timestamp diagnostic (F-E3) and isStandardActive (F-E5).
-//   Nothing was duplicated to make this move.
+//   `operationsTimeZone` decides which day a hotel is asking about, and
+//   `storageDirectory` decides whether a record's evidence can be read. Both are
+//   resolved once in main(), fail-closed, and passed in rather than resolved again:
+//   two lookups could disagree, and both of these decide what a client is told.
+//   Everything else it uses is already module-level — the window and evidence helpers
+//   (F-E2, Atom A), the operations time helpers (F-E1), the timestamp diagnostic (F-E3),
+//   the lane allowlist and isStandardActive (F-E5). Nothing was duplicated.
 //
 // FOUR THINGS THAT ARE CONTRACT, NOT STYLE
 //   The default date is today in the OPERATIONS zone, not UTC. A hotel working at 00:30
 //   local is still asking about its own day, and computing that in UTC would silently
 //   report the wrong one for part of every night.
 //
-//   Two fail-closed skips, and they are not the same skip. A standard that was inactive
-//   at evaluation time is skipped as a normal outcome and logged as such. A standard
-//   whose window cannot be resolved is skipped as a fault and logged as a warning with
-//   metadata — never evaluated against a half-built range. Collapsing them would hide a
-//   configuration error inside routine output.
+//   Both refusals are fail-closed and both answer 400. An unknown lane is refused rather
+//   than answered with an empty array, because an empty array reads as "nothing is
+//   missing in that lane" — the most dangerous possible answer to a typo.
 //
-//   A gap is reported only when the observation count falls short AND no leave-empty
-//   decision was recorded. The second check is what keeps a deliberate decision from
-//   being re-reported as a failure.
+//   The two remaining skips are still two different skips, and each now emits an entry
+//   before it continues. A standard whose activation cannot be resolved is Unknown; a
+//   standard whose window cannot be resolved is Unknown for a different reason and is
+//   still logged as a fault with metadata. Collapsing them would hide a configuration
+//   error inside routine output.
+//
+//   `Missing expected observation` is reported only when the count falls short, no
+//   leave-empty decision covers it, and nothing else about the standard is unresolved.
+//   The wording is unchanged because clients match on it.
 //
 //   The parameter is named `apiV1` on purpose: the route manifest resolves a
 //   registration's gate and its /api/v1 prefix from the receiver's name.
@@ -39,9 +69,14 @@ import Foundation
 /// Registers `GET /api/v1/gaps/mechanical` on the machine-gated group.
 ///
 /// - Parameters:
-///   - apiV1: the gated `/api/v1` route group; gating is unchanged by this move.
+///   - apiV1: the gated `/api/v1` route group; gating is unchanged.
 ///   - operationsTimeZone: the zone resolved once in `main()`, fail-closed.
-func registerMechanicalGapReadRoutes(on apiV1: MachineGatedRoutes, operationsTimeZone: TimeZone) {
+///   - storageDirectory: the validated storage root resolved once in `main()`.
+func registerMechanicalGapReadRoutes(
+    on apiV1: MachineGatedRoutes,
+    operationsTimeZone: TimeZone,
+    storageDirectory: String
+) {
     apiV1.get("gaps", "mechanical") { req async throws -> Response in
         guard let sql = req.db as? SQLDatabase else {
             return Response(status: .internalServerError)
@@ -58,6 +93,28 @@ func registerMechanicalGapReadRoutes(on apiV1: MachineGatedRoutes, operationsTim
             ])
             return response
         }
+
+        // Fail closed on the lane filter, and reuse the standards allowlist rather than
+        // the asset one: they are deliberately different sets and merging them would
+        // silently widen both.
+        let requestedLaneKey: String?
+
+        if let rawLaneKey = req.query[String.self, at: "laneKey"] {
+            guard let validatedLaneKey = validatedOperationalStandardLaneKey(rawLaneKey) else {
+                let response = Response(status: .badRequest)
+                try response.content.encode([
+                    "reason": "laneKey must be a known operational standard lane"
+                ])
+                return response
+            }
+            requestedLaneKey = validatedLaneKey
+        } else {
+            requestedLaneKey = nil
+        }
+
+        // COALESCE is what keeps this one query rather than two: with no lane requested
+        // the bind is NULL and the predicate degrades to `lane_key = lane_key`, which
+        // selects everything. The value is bound, never interpolated.
         let standards = try await sql.raw("""
             SELECT
                 id,
@@ -67,12 +124,14 @@ func registerMechanicalGapReadRoutes(on apiV1: MachineGatedRoutes, operationsTim
                 "startHour",
                 "endHour",
                 "requiredCount",
+                lane_key,
                 created_at
             FROM operational_standards
+            WHERE lane_key = COALESCE(\(bind: requestedLaneKey), lane_key)
             ORDER BY "standardKey" ASC
         """).all()
 
-        var gaps: [[String: String]] = []
+        var entries: [[String: String]] = []
 
         let timestampDiagnosticRows = try await sql.raw(timestampReadExpectationDiagnosticQuery()).all()
         logTimestampReadExpectationDiagnostic(
@@ -89,8 +148,24 @@ func registerMechanicalGapReadRoutes(on apiV1: MachineGatedRoutes, operationsTim
             let startHour = try standard.decode(column: "startHour", as: Int.self)
             let endHour = try standard.decode(column: "endHour", as: Int.self)
             let requiredCount = try standard.decode(column: "requiredCount", as: Int.self)
+            let laneKey = try standard.decode(column: "lane_key", as: String.self)
             let createdAt = try standard.decode(column: "created_at", as: String.self)
             let evaluationTimestamp = iso8601Timestamp(dateString: requestedDate, hour: endHour)
+
+            // Built once so the three places that emit an entry cannot disagree about
+            // what this standard is called or which window it covers.
+            let context = MechanicalGapStandardContext(
+                sourceTag: sourceTag,
+                standardKey: standardKey,
+                description: description,
+                laneKey: laneKey,
+                expectedDate: requestedDate,
+                evaluationTimestamp: evaluationTimestamp,
+                expectedWindow: String(format: "%02d:00-%02d:00", startHour, endHour),
+                requiredCount: requiredCount,
+                trackEvaluable: false
+            )
+
             let standardWasActive = try await isStandardActive(
                 standardID: standardID,
                 at: evaluationTimestamp,
@@ -98,13 +173,44 @@ func registerMechanicalGapReadRoutes(on apiV1: MachineGatedRoutes, operationsTim
                 sql: sql
             )
 
-            guard standardWasActive else {
-                print("Historical status resolution: standard inactive at gap evaluation time — skipping \(standardKey)")
+            // Two different answers hide behind that one Bool. On a row whose governance
+            // fields were never declared, isStandardActive falls back to a text
+            // comparison the legacy sentinel always loses, so a false there means
+            // "cannot tell", not "retired". Only a recorded decision separates them.
+            let governanceFieldsDeclared = standardCreatedAtIsDeclared(createdAt)
+            var activationResolved = governanceFieldsDeclared
+
+            if !governanceFieldsDeclared {
+                let statusDecisionRows = try await sql.raw(
+                    standardStatusDecisionCountQuery(standardID: standardID, at: evaluationTimestamp)
+                ).all()
+
+                let statusDecisionCount = try statusDecisionRows[0].decode(column: "decisionCount", as: Int.self)
+                activationResolved = statusDecisionCount > 0
+            }
+
+            guard activationResolved, standardWasActive else {
+                print("Standard not evaluated against a window at gap evaluation time: \(standardKey)")
+                entries.append(mechanicalGapEntry(
+                    context: context,
+                    evidence: .empty,
+                    outcome: mechanicalGapOutcome(MechanicalGapFacts(
+                        activationResolved: activationResolved,
+                        standardActive: standardWasActive,
+                        windowResolved: true,
+                        trackTypeDeclared: governanceFieldsDeclared,
+                        requiredCount: requiredCount,
+                        evidence: .empty,
+                        leaveEmptyDecisionRecorded: false
+                    ))
+                ))
                 continue
             }
 
-            // Fail closed: a standard whose window cannot be resolved is skipped and
-            // reported rather than evaluated against a half-built range.
+            // Fail closed: a standard whose window cannot be resolved is reported as
+            // unknown rather than evaluated against a half-built range. It is still
+            // logged as a fault with metadata, because it is a configuration error and
+            // not a routine outcome.
             guard let windowBounds = observationWindowBounds(
                 localDate: requestedDate,
                 startHour: startHour,
@@ -119,14 +225,34 @@ func registerMechanicalGapReadRoutes(on apiV1: MachineGatedRoutes, operationsTim
                         "localDate": .string(requestedDate)
                     ]
                 )
+                entries.append(mechanicalGapEntry(
+                    context: context,
+                    evidence: .empty,
+                    outcome: mechanicalGapOutcome(MechanicalGapFacts(
+                        activationResolved: true,
+                        standardActive: true,
+                        windowResolved: false,
+                        trackTypeDeclared: governanceFieldsDeclared,
+                        requiredCount: requiredCount,
+                        evidence: .empty,
+                        leaveEmptyDecisionRecorded: false
+                    ))
+                ))
                 continue
             }
 
-            let countRows = try await sql.raw(observationCountInWindowQuery(bounds: windowBounds)).all()
+            let evidenceRows = try await sql.raw(laneScopedObservationEvidenceQuery(bounds: windowBounds, laneKey: laneKey)).all()
 
-            let observedCount = try countRows[0].decode(column: "recordCount", as: Int.self)
+            let evidence = try observationEvidenceTally(
+                from: evidenceRows,
+                storageDirectory: storageDirectory
+            )
 
-            if observedCount < requiredCount {
+            var leaveEmptyDecisionRecorded = false
+
+            // The decision query runs only once the count is already short: a standard
+            // that was met needs no excuse for being met.
+            if evidence.observedCount < requiredCount {
                 let decisionRows = try await sql.raw(
                     leaveEmptyDecisionCountQuery(
                         standardKey: standardKey,
@@ -137,27 +263,29 @@ func registerMechanicalGapReadRoutes(on apiV1: MachineGatedRoutes, operationsTim
                 ).all()
 
                 let decisionCount = try decisionRows[0].decode(column: "decisionCount", as: Int.self)
-
-                if decisionCount == 0 {
-                    gaps.append([
-                        "sourceTag": sourceTag,
-                        "standardKey": standardKey,
-                        "description": description,
-                        "expectedDate": requestedDate,
-                        "evaluationTimestamp": evaluationTimestamp,
-                        "expectedWindow": String(format: "%02d:00-%02d:00", startHour, endHour),
-                        "requiredCount": String(requiredCount),
-                        "observedCount": String(observedCount),
-                        "gapStatus": "Missing expected observation"
-                    ])
-                }
+                leaveEmptyDecisionRecorded = decisionCount > 0
             }
+
+            entries.append(mechanicalGapEntry(
+                context: context,
+                evidence: evidence,
+                outcome: mechanicalGapOutcome(MechanicalGapFacts(
+                    activationResolved: true,
+                    standardActive: true,
+                    windowResolved: true,
+                    trackTypeDeclared: governanceFieldsDeclared,
+                    requiredCount: requiredCount,
+                    evidence: evidence,
+                    leaveEmptyDecisionRecorded: leaveEmptyDecisionRecorded
+                ))
+            ))
         }
 
-        print("Mechanical gap detection PASS: \(gaps.count) gaps")
+        print("Mechanical gap detection PASS: \(entries.count) standards evaluated")
+        print("trackEvaluable: false")
 
         let response = Response(status: .ok)
-        try response.content.encode(gaps)
+        try response.content.encode(entries)
         return response
     }
 }
